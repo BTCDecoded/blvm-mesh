@@ -1,0 +1,11 @@
+name = "bllvm-mesh"
+version = "0.1.0"
+description = "Commons Mesh networking module for bllvm-node"
+author = "Bitcoin Commons Team"
+entry_point = "bllvm-mesh"
+
+capabilities = [
+    "read_blockchain",
+    "subscribe_events",
+]
+

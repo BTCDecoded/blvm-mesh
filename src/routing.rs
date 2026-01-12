@@ -5,6 +5,7 @@
 
 use crate::error::MeshError;
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
@@ -66,13 +67,13 @@ impl RoutingTable {
     pub fn add_direct_peer(&self, node_id: NodeId, address: Vec<u8>) {
         // Lock-free insert
         self.direct_peers.insert(node_id, address.clone());
-        
+
         // Update routing entry (lock-free)
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         self.routes.insert(
             node_id,
             RoutingEntry {
@@ -85,7 +86,7 @@ impl RoutingTable {
                 quality_score: 1.0, // Direct connections have perfect quality
             },
         );
-        
+
         debug!("Added direct peer: node_id={:x?}", &node_id[..8]);
     }
 
@@ -95,7 +96,7 @@ impl RoutingTable {
     pub fn remove_direct_peer(&self, node_id: &NodeId) {
         // Lock-free remove
         self.direct_peers.remove(node_id);
-        
+
         // Remove routing entry if it was direct-only (lock-free)
         if let Some(entry) = self.routes.get(node_id) {
             if entry.direct_address.is_some() && entry.next_hop.is_none() {
@@ -138,13 +139,13 @@ impl RoutingTable {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            
+
             if now <= entry.last_updated + self.route_expiry_seconds {
                 let route = entry.route_path.clone();
-                
+
                 // Cache the route (lock-free insert)
                 self.route_cache.insert(*destination, route.clone());
-                
+
                 return Some(route);
             }
         }
@@ -159,7 +160,7 @@ impl RoutingTable {
     /// Fee calculation: 60% to destination, 30% to intermediate nodes, 10% to source
     pub fn calculate_routing_fee(&self, route: &[NodeId], base_fee_sats: u64) -> RoutingFee {
         let total_fee = base_fee_sats;
-        
+
         // Split: 60% destination, 30% intermediate, 10% source
         let destination_fee = (total_fee * 60) / 100;
         let intermediate_fee = if route.len() > 2 {
@@ -241,7 +242,7 @@ pub struct RoutingFee {
 }
 
 /// Routing statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingStats {
     /// Total number of routes
     pub total_routes: usize,

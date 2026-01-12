@@ -78,9 +78,8 @@ impl PaymentProof {
     /// Calculate hash of payment proof (for replay prevention)
     pub fn hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
-        
-        let serialized = bincode::serialize(self)
-            .expect("Payment proof should be serializable");
+
+        let serialized = bincode::serialize(self).expect("Payment proof should be serializable");
         let hash = Sha256::digest(&serialized);
         let mut result = [0u8; 32];
         result.copy_from_slice(&hash);
@@ -126,4 +125,3 @@ impl VerificationResult {
         }
     }
 }
-

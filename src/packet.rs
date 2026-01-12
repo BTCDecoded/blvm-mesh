@@ -83,7 +83,7 @@ impl MeshPacket {
             source,
             destination,
             route: vec![source], // Initial route starts with source
-            sequence: 0, // Will be set by sender
+            sequence: 0,         // Will be set by sender
             timestamp: now,
             payment_proof: None,
             payload,
@@ -149,22 +149,22 @@ impl MeshPacket {
         // Payment proof: variable (if present)
         // Payload: payload.len()
         // Metadata: variable (if present)
-        
+
         let mut size = 82;
         size += self.route.len() * 32;
-        
+
         if let Some(ref proof) = self.payment_proof {
             // Estimate payment proof size (Lightning: ~500 bytes, CTV: ~200 bytes)
             size += 500; // Conservative estimate
         }
-        
+
         size += self.payload.len();
-        
+
         if let Some(ref metadata) = self.metadata {
             // Estimate metadata size
             size += 100; // Conservative estimate
         }
-        
+
         size
     }
 
@@ -188,7 +188,7 @@ impl MeshPacket {
     pub fn get_next_hop(&self, my_node_id: &NodeId) -> Option<NodeId> {
         // Find this node in the route
         let my_index = self.route.iter().position(|&id| id == *my_node_id)?;
-        
+
         // Get next node in route
         if my_index + 1 < self.route.len() {
             Some(self.route[my_index + 1])
@@ -207,4 +207,3 @@ impl MeshPacket {
         }
     }
 }
-

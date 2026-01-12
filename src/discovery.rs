@@ -70,11 +70,7 @@ struct PendingRequest {
 
 impl RouteDiscovery {
     /// Create a new route discovery manager
-    pub fn new(
-        routing_table: Arc<RoutingTable>,
-        max_hops: u8,
-        timeout_seconds: u64,
-    ) -> Self {
+    pub fn new(routing_table: Arc<RoutingTable>, max_hops: u8, timeout_seconds: u64) -> Self {
         Self {
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
             request_id_counter: Arc::new(RwLock::new(0)),
@@ -105,7 +101,7 @@ impl RouteDiscovery {
         }
 
         // Check if destination is a direct peer (lock-free with DashMap)
-        if let Some(entry) = self.routing_table.routes.get(&destination) {
+        if let Some(entry) = self.routing_table.get_route(&destination) {
             if entry.direct_address.is_some() {
                 // Direct peer - return direct route
                 return Ok(Some(vec![source, destination]));
@@ -163,22 +159,22 @@ impl RouteDiscovery {
         if destinations.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        
+
         // Discover all routes in parallel
         let futures: Vec<_> = destinations
             .iter()
             .map(|dest| self.discover_route(*dest, source))
             .collect();
-        
+
         // Wait for all discoveries to complete
         let results = futures::future::join_all(futures).await;
-        
+
         // Collect results into HashMap
         let mut route_map = std::collections::HashMap::new();
         for (dest, result) in destinations.iter().zip(results.into_iter()) {
             route_map.insert(*dest, result?);
         }
-        
+
         Ok(route_map)
     }
 
@@ -220,7 +216,7 @@ impl RouteDiscovery {
                     // If it's a direct route (only one hop), we might be the destination
                     // For now, we'll assume if we have a direct route, we can respond
                     // The caller should verify we are actually the destination
-                    if route.len() == 1 {
+                    if route.route_path.len() == 1 {
                         // Direct route - might be ourselves
                         // In production, compare with actual node_id
                         let response = DiscoveryMessage::RouteResponse {
@@ -372,8 +368,10 @@ impl RouteDiscovery {
         }
 
         if !expired.is_empty() {
-            debug!("Cleaned up {} expired route discovery requests", expired.len());
+            debug!(
+                "Cleaned up {} expired route discovery requests",
+                expired.len()
+            );
         }
     }
 }
-

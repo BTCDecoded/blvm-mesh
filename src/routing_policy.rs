@@ -4,6 +4,7 @@
 //! It leverages existing Bitcoin protocol detection rather than creating duplicate logic.
 
 use crate::error::MeshError;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, trace};
 
@@ -32,7 +33,7 @@ pub enum DetectedProtocol {
 }
 
 /// Mesh operating mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MeshMode {
     /// Bitcoin-only mode (only Bitcoin P2P allowed, no mesh)
     BitcoinOnly,
@@ -54,7 +55,7 @@ impl RoutingPolicyEngine {
     }
 
     /// Detect protocol from message bytes
-    /// 
+    ///
     /// This leverages existing Bitcoin protocol detection patterns:
     /// - Bitcoin P2P: Magic bytes (0xf9beb4d9 for mainnet) + command string
     /// - Commons Governance: Service flags + specific message types
@@ -64,24 +65,25 @@ impl RoutingPolicyEngine {
         // Fast-path: Check for Bitcoin P2P magic bytes first
         if message.len() >= 4 {
             let magic = u32::from_le_bytes([message[0], message[1], message[2], message[3]]);
-            
+
             // Bitcoin P2P magic bytes
             if magic == 0xd9b4bef9 // mainnet
                 || magic == 0x0709110b // testnet
-                || magic == 0xdab5bffa // regtest
+                || magic == 0xdab5bffa
+            // regtest
             {
                 // Check if it's a known Bitcoin P2P command
                 if message.len() >= 12 {
                     let command = String::from_utf8_lossy(&message[4..12])
                         .trim_end_matches('\0')
                         .to_string();
-                    
+
                     // Known Bitcoin P2P commands
                     if self.is_bitcoin_command(&command) {
                         trace!("Detected Bitcoin P2P protocol: command={}", command);
                         return DetectedProtocol::BitcoinP2P;
                     }
-                    
+
                     // Check for Commons governance messages
                     if self.is_governance_command(&command) {
                         trace!("Detected Commons governance protocol: command={}", command);
@@ -90,7 +92,7 @@ impl RoutingPolicyEngine {
                 }
             }
         }
-        
+
         // Check for Stratum V2 protocol (if message is long enough)
         if message.len() >= 2 {
             // Stratum V2 uses specific message type tags
@@ -100,14 +102,18 @@ impl RoutingPolicyEngine {
                 return DetectedProtocol::StratumV2;
             }
         }
-        
+
         // Check for mesh packet magic
-        if message.len() >= 4 && message[0] == b'M' && message[1] == b'E' 
-            && message[2] == b'S' && message[3] == b'H' {
+        if message.len() >= 4
+            && message[0] == b'M'
+            && message[1] == b'E'
+            && message[2] == b'S'
+            && message[3] == b'H'
+        {
             trace!("Detected mesh packet");
             return DetectedProtocol::MeshPacket;
         }
-        
+
         // Unknown protocol
         trace!("Unknown protocol detected");
         DetectedProtocol::Unknown
@@ -121,19 +127,19 @@ impl RoutingPolicyEngine {
                 trace!("Bitcoin P2P → Free routing");
                 RoutingPolicy::Free
             }
-            
+
             // Commons governance is always free
             (DetectedProtocol::CommonsGovernance, _) => {
                 trace!("Commons governance → Free routing");
                 RoutingPolicy::Free
             }
-            
+
             // Stratum V2 is always free
             (DetectedProtocol::StratumV2, _) => {
                 trace!("Stratum V2 → Free routing");
                 RoutingPolicy::Free
             }
-            
+
             // Mesh packets depend on mode
             (DetectedProtocol::MeshPacket, MeshMode::BitcoinOnly) => {
                 debug!("Mesh packet in Bitcoin-only mode → Rejected");
@@ -147,7 +153,7 @@ impl RoutingPolicyEngine {
                 trace!("Mesh packet in open mode → Free routing");
                 RoutingPolicy::Free
             }
-            
+
             // Unknown protocols require payment (except in open mode)
             (DetectedProtocol::Unknown, MeshMode::Open) => {
                 trace!("Unknown protocol in open mode → Free routing");
@@ -163,25 +169,47 @@ impl RoutingPolicyEngine {
     /// Check if command is a known Bitcoin P2P command
     fn is_bitcoin_command(&self, command: &str) -> bool {
         // Core Bitcoin P2P commands
-        matches!(command, 
-            "version" | "verack" | "ping" | "pong" |
-            "getheaders" | "headers" | "getblocks" | "block" |
-            "getdata" | "inv" | "tx" | "notfound" |
-            "getaddr" | "addr" | "mempool" | "feefilter" |
-            "sendheaders" | "sendcmpct" | "cmpctblock" |
-            "getblocktxn" | "blocktxn" | "getcfilters" |
-            "cfilter" | "getcfheaders" | "cfheaders" |
-            "getcfcheckpt" | "cfcheckpt" | "sendpkgtxn" |
-            "pkgtxn" | "pkgtxnreject"
+        matches!(
+            command,
+            "version"
+                | "verack"
+                | "ping"
+                | "pong"
+                | "getheaders"
+                | "headers"
+                | "getblocks"
+                | "block"
+                | "getdata"
+                | "inv"
+                | "tx"
+                | "notfound"
+                | "getaddr"
+                | "addr"
+                | "mempool"
+                | "feefilter"
+                | "sendheaders"
+                | "sendcmpct"
+                | "cmpctblock"
+                | "getblocktxn"
+                | "blocktxn"
+                | "getcfilters"
+                | "cfilter"
+                | "getcfheaders"
+                | "cfheaders"
+                | "getcfcheckpt"
+                | "cfcheckpt"
+                | "sendpkgtxn"
+                | "pkgtxn"
+                | "pkgtxnreject"
         )
     }
 
     /// Check if command is a Commons governance command
     fn is_governance_command(&self, command: &str) -> bool {
         // Commons governance messages
-        matches!(command,
-            "econreg" | "econveto" | "econstat" | "econfork" |
-            "getbanlist" | "banlist"
+        matches!(
+            command,
+            "econreg" | "econveto" | "econstat" | "econfork" | "getbanlist" | "banlist"
         )
     }
 
@@ -234,7 +262,7 @@ mod tests {
     #[test]
     fn test_bitcoin_p2p_detection() {
         let engine = RoutingPolicyEngine::new(MeshMode::PaymentGated);
-        
+
         // Bitcoin mainnet magic + version command
         let bitcoin_message = vec![
             0xf9, 0xbe, 0xb4, 0xd9, // magic
@@ -242,10 +270,10 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, // payload length
             0x00, 0x00, 0x00, 0x00, // checksum
         ];
-        
+
         let protocol = engine.detect_protocol(&bitcoin_message);
         assert_eq!(protocol, DetectedProtocol::BitcoinP2P);
-        
+
         let policy = engine.determine_policy(protocol);
         assert_eq!(policy, RoutingPolicy::Free);
     }
@@ -253,16 +281,16 @@ mod tests {
     #[test]
     fn test_mesh_packet_detection() {
         let engine = RoutingPolicyEngine::new(MeshMode::PaymentGated);
-        
+
         // Mesh packet magic
         let mesh_message = vec![
             b'M', b'E', b'S', b'H', // mesh magic
             0x00, 0x00, 0x00, 0x00, // rest of header
         ];
-        
+
         let protocol = engine.detect_protocol(&mesh_message);
         assert_eq!(protocol, DetectedProtocol::MeshPacket);
-        
+
         let policy = engine.determine_policy(protocol);
         assert_eq!(policy, RoutingPolicy::PaymentRequired);
     }
@@ -270,13 +298,13 @@ mod tests {
     #[test]
     fn test_unknown_protocol() {
         let engine = RoutingPolicyEngine::new(MeshMode::PaymentGated);
-        
+
         // Random data
         let unknown_message = vec![0x12, 0x34, 0x56, 0x78];
-        
+
         let protocol = engine.detect_protocol(&unknown_message);
         assert_eq!(protocol, DetectedProtocol::Unknown);
-        
+
         let policy = engine.determine_policy(protocol);
         assert_eq!(policy, RoutingPolicy::PaymentRequired);
     }
@@ -284,11 +312,10 @@ mod tests {
     #[test]
     fn test_open_mode() {
         let engine = RoutingPolicyEngine::new(MeshMode::Open);
-        
+
         // Unknown protocol in open mode should be free
         let protocol = DetectedProtocol::Unknown;
         let policy = engine.determine_policy(protocol);
         assert_eq!(policy, RoutingPolicy::Free);
     }
 }
-

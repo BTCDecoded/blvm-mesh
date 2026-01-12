@@ -4,6 +4,7 @@
 
 use crate::payment_proof::PaymentProof;
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 
@@ -67,7 +68,8 @@ impl ReplayPrevention {
             if sequence <= *entry.value() {
                 return Err(format!(
                     "Sequence number out of order: got {}, expected > {}",
-                    sequence, entry.value()
+                    sequence,
+                    entry.value()
                 ));
             }
         }
@@ -82,7 +84,7 @@ impl ReplayPrevention {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         self.replay_data.insert(
             proof_hash,
             ReplayEntry {
@@ -122,7 +124,10 @@ impl ReplayPrevention {
         }
 
         if !expired_hashes.is_empty() {
-            debug!("Cleaning up {} expired payment proof hashes", expired_hashes.len());
+            debug!(
+                "Cleaning up {} expired payment proof hashes",
+                expired_hashes.len()
+            );
             // Lock-free removal
             for hash in &expired_hashes {
                 self.replay_data.remove(hash);
@@ -143,7 +148,7 @@ impl ReplayPrevention {
 }
 
 /// Statistics about replay prevention
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayStats {
     /// Number of active (non-expired) payment proof hashes
     pub active_hashes: usize,
@@ -152,4 +157,3 @@ pub struct ReplayStats {
     /// Expiry time in seconds
     pub expiry_seconds: u64,
 }
-

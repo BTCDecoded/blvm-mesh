@@ -4,28 +4,29 @@
 //! including payment-gated routing, traffic classification, and fee distribution.
 
 use anyhow::Result;
-use bllvm_node::module::ipc::protocol::{EventMessage, EventPayload, EventType, LogLevel, ModuleMessage};
+use blvm_node::module::ipc::protocol::{EventMessage, EventPayload, LogLevel, ModuleMessage};
+use blvm_node::module::EventType;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+mod client;
+mod discovery;
+mod error;
 mod manager;
-mod routing_policy;
-mod routing;
-mod verifier;
+mod network;
+mod nodeapi_ipc;
+mod packet;
 mod payment_proof;
 mod replay;
-mod packet;
-mod discovery;
-mod network;
-mod error;
-mod client;
-mod nodeapi_ipc;
+mod routing;
+mod routing_policy;
+mod verifier;
 
+use client::ModuleClient;
 use error::MeshError;
 use manager::MeshManager;
-use client::ModuleClient;
 
 /// Command-line arguments for the module
 #[derive(Parser, Debug)]
@@ -54,25 +55,36 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Get module ID (from args or environment)
-    let module_id = args.module_id
+    let module_id = args
+        .module_id
         .or_else(|| std::env::var("MODULE_NAME").ok())
-        .unwrap_or_else(|| "bllvm-mesh".to_string());
+        .unwrap_or_else(|| "blvm-mesh".to_string());
 
     // Get socket path (from args, env, or default)
-    let socket_path = args.socket_path
-        .or_else(|| std::env::var("BLLVM_MODULE_SOCKET").ok().map(PathBuf::from))
-        .or_else(|| std::env::var("MODULE_SOCKET_DIR").ok().map(|d| PathBuf::from(d).join("modules.sock")))
+    let socket_path = args
+        .socket_path
+        .or_else(|| std::env::var("BLVM_MODULE_SOCKET").ok().map(PathBuf::from))
+        .or_else(|| {
+            std::env::var("MODULE_SOCKET_DIR")
+                .ok()
+                .map(|d| PathBuf::from(d).join("modules.sock"))
+        })
         .unwrap_or_else(|| PathBuf::from("data/modules/modules.sock"));
 
-    info!("bllvm-mesh module starting... (module_id: {}, socket: {:?})", module_id, socket_path);
+    info!(
+        "blvm-mesh module starting... (module_id: {}, socket: {:?})",
+        module_id, socket_path
+    );
 
     // Connect to node
     let mut client = match ModuleClient::connect(
         socket_path.clone(),
         module_id.clone(),
-        "bllvm-mesh".to_string(),
+        "blvm-mesh".to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
-    ).await {
+    )
+    .await
+    {
         Ok(client) => client,
         Err(e) => {
             error!("Failed to connect to node: {}", e);
@@ -112,14 +124,18 @@ async fn main() -> Result<()> {
     ));
 
     // Create mesh manager
-    let ctx = bllvm_node::module::traits::ModuleContext {
+    let ctx = blvm_node::module::traits::ModuleContext {
         module_id: module_id.clone(),
         config: std::collections::HashMap::new(),
-        data_dir: args.data_dir.unwrap_or_else(|| PathBuf::from("data/modules/bllvm-mesh")),
+        data_dir: args
+            .data_dir
+            .unwrap_or_else(|| PathBuf::from("data/modules/blvm-mesh"))
+            .to_string_lossy()
+            .to_string(),
         socket_path: socket_path.to_string_lossy().to_string(),
     };
 
-    let manager = MeshManager::new(&ctx, Arc::clone(&node_api))
+    let manager = MeshManager::new(&ctx, node_api.clone())
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create mesh manager: {}", e))?;
 
@@ -146,7 +162,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         // If no events in batch, wait for next event
         if event_batch.is_empty() {
             if let Some(event) = event_receiver.recv().await {
@@ -155,11 +171,11 @@ async fn main() -> Result<()> {
                 break; // Channel closed
             }
         }
-        
+
         // Process events in parallel
         let futures: Vec<_> = event_batch
-            .iter()
-            .map(|event| async {
+            .into_iter()
+            .map(|event| async move {
                 match event {
                     ModuleMessage::Event(event_msg) => {
                         match event_msg.event_type {
@@ -189,7 +205,7 @@ async fn main() -> Result<()> {
                 }
             })
             .collect();
-        
+
         // Wait for all events in batch to be processed
         futures::future::join_all(futures).await;
     }

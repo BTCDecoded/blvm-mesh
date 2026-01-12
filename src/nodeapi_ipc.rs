@@ -4,18 +4,18 @@
 //! method calls into IPC requests to the node. This can be reused by all modules.
 
 use async_trait::async_trait;
-use bllvm_node::module::ipc::client::ModuleIpcClient;
-use bllvm_node::module::ipc::protocol::{
+use blvm_node::module::ipc::client::ModuleIpcClient;
+use blvm_node::module::ipc::protocol::{
     EventPayload, MessageType, RequestMessage, RequestPayload, ResponsePayload,
 };
-use bllvm_node::module::traits::{
+use blvm_node::module::traits::{
     ChainInfo, EventType, LightningInfo, MempoolSize, ModuleError, NetworkStats, NodeAPI,
     PaymentState, PeerInfo,
 };
-use bllvm_node::{Block, BlockHeader, Hash, OutPoint, Transaction, UTXO};
+use blvm_node::{Block, BlockHeader, Hash, OutPoint, Transaction, UTXO};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 /// NodeAPI implementation that uses IPC to communicate with the node
 pub struct NodeApiIpc {
@@ -23,6 +23,8 @@ pub struct NodeApiIpc {
     ipc_client: Arc<Mutex<ModuleIpcClient>>,
     /// Module ID for logging and identification
     module_id: String,
+    /// Correlation ID counter
+    correlation_id: Arc<tokio::sync::Mutex<u64>>,
 }
 
 impl NodeApiIpc {
@@ -31,7 +33,15 @@ impl NodeApiIpc {
         Self {
             ipc_client,
             module_id,
+            correlation_id: Arc::new(tokio::sync::Mutex::new(0)),
         }
+    }
+
+    /// Get next correlation ID
+    async fn next_correlation_id(&self) -> u64 {
+        let mut id = self.correlation_id.lock().await;
+        *id += 1;
+        *id
     }
 
     /// Helper to send a request and parse the response
@@ -52,13 +62,17 @@ impl NodeApiIpc {
 
         if !response.success {
             return Err(ModuleError::OperationError(
-                response.error.unwrap_or_else(|| "Unknown error".to_string()),
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ));
         }
 
         match response.payload {
             Some(payload) => parser(payload),
-            None => Err(ModuleError::OperationError("Empty response payload".to_string())),
+            None => Err(ModuleError::OperationError(
+                "Empty response payload".to_string(),
+            )),
         }
     }
 
@@ -82,7 +96,9 @@ impl NodeApiIpc {
             RequestPayload::GetLightningNodeUrl => MessageType::GetLightningNodeUrl,
             RequestPayload::GetLightningInfo => MessageType::GetLightningInfo,
             RequestPayload::GetPaymentState { .. } => MessageType::GetPaymentState,
-            RequestPayload::CheckTransactionInMempool { .. } => MessageType::CheckTransactionInMempool,
+            RequestPayload::CheckTransactionInMempool { .. } => {
+                MessageType::CheckTransactionInMempool
+            }
             RequestPayload::GetFeeEstimate { .. } => MessageType::GetFeeEstimate,
             RequestPayload::ReadFile { .. } => MessageType::ReadFile,
             RequestPayload::WriteFile { .. } => MessageType::WriteFile,
@@ -115,7 +131,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::GetBlock { hash: *hash },
             |payload| match payload {
                 ResponsePayload::Block(block) => Ok(block),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -126,7 +144,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::GetBlockHeader { hash: *hash },
             |payload| match payload {
                 ResponsePayload::BlockHeader(header) => Ok(header),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -137,7 +157,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::GetTransaction { hash: *hash },
             |payload| match payload {
                 ResponsePayload::Transaction(tx) => Ok(tx),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -148,31 +170,31 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::HasTransaction { hash: *hash },
             |payload| match payload {
                 ResponsePayload::Bool(b) => Ok(b),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
 
     async fn get_chain_tip(&self) -> Result<Hash, ModuleError> {
-        self.request(
-            RequestPayload::GetChainTip,
-            |payload| match payload {
-                ResponsePayload::Hash(hash) => Ok(hash),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::GetChainTip, |payload| match payload {
+            ResponsePayload::Hash(hash) => Ok(hash),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
     async fn get_block_height(&self) -> Result<u64, ModuleError> {
-        self.request(
-            RequestPayload::GetBlockHeight,
-            |payload| match payload {
-                ResponsePayload::U64(height) => Ok(height),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::GetBlockHeight, |payload| match payload {
+            ResponsePayload::U64(height) => Ok(height),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
@@ -183,7 +205,9 @@ impl NodeAPI for NodeApiIpc {
             },
             |payload| match payload {
                 ResponsePayload::Utxo(utxo) => Ok(utxo),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -192,7 +216,7 @@ impl NodeAPI for NodeApiIpc {
     async fn subscribe_events(
         &self,
         event_types: Vec<EventType>,
-    ) -> Result<mpsc::Receiver<bllvm_node::module::ipc::protocol::ModuleMessage>, ModuleError> {
+    ) -> Result<mpsc::Receiver<blvm_node::module::ipc::protocol::ModuleMessage>, ModuleError> {
         // Note: Event subscription is handled differently - it's already set up
         // in the ModuleClient. This method is for compatibility but events
         // should be received via the ModuleClient's event_receiver.
@@ -207,64 +231,67 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::GetMempoolTransactions,
             |payload| match payload {
                 ResponsePayload::MempoolTransactions(hashes) => Ok(hashes),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
 
-    async fn get_mempool_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>, ModuleError> {
+    async fn get_mempool_transaction(
+        &self,
+        tx_hash: &Hash,
+    ) -> Result<Option<Transaction>, ModuleError> {
         self.request(
             RequestPayload::GetMempoolTransaction { tx_hash: *tx_hash },
             |payload| match payload {
                 ResponsePayload::MempoolTransaction(tx) => Ok(tx),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
 
     async fn get_mempool_size(&self) -> Result<MempoolSize, ModuleError> {
-        self.request(
-            RequestPayload::GetMempoolSize,
-            |payload| match payload {
-                ResponsePayload::MempoolSize(size) => Ok(size),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::GetMempoolSize, |payload| match payload {
+            ResponsePayload::MempoolSize(size) => Ok(size),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
     async fn get_network_stats(&self) -> Result<NetworkStats, ModuleError> {
-        self.request(
-            RequestPayload::GetNetworkStats,
-            |payload| match payload {
-                ResponsePayload::NetworkStats(stats) => Ok(stats),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::GetNetworkStats, |payload| match payload {
+            ResponsePayload::NetworkStats(stats) => Ok(stats),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
     async fn get_network_peers(&self) -> Result<Vec<PeerInfo>, ModuleError> {
-        self.request(
-            RequestPayload::GetNetworkPeers,
-            |payload| match payload {
-                ResponsePayload::Peers(peers) => Ok(peers),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::GetNetworkPeers, |payload| match payload {
+            ResponsePayload::NetworkPeers(peers) => Ok(peers),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
     async fn get_chain_info(&self) -> Result<ChainInfo, ModuleError> {
-        self.request(
-            RequestPayload::GetChainInfo,
-            |payload| match payload {
-                ResponsePayload::ChainInfo(info) => Ok(info),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::GetChainInfo, |payload| match payload {
+            ResponsePayload::ChainInfo(info) => Ok(info),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
@@ -273,7 +300,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::GetBlockByHeight { height },
             |payload| match payload {
                 ResponsePayload::BlockByHeight(block) => Ok(block),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -284,32 +313,37 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::GetLightningNodeUrl,
             |payload| match payload {
                 ResponsePayload::LightningNodeUrl(url) => Ok(url),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
 
     async fn get_lightning_info(&self) -> Result<Option<LightningInfo>, ModuleError> {
-        self.request(
-            RequestPayload::GetLightningInfo,
-            |payload| match payload {
-                ResponsePayload::LightningInfo(info) => Ok(Some(info)),
-                ResponsePayload::Empty => Ok(None),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::GetLightningInfo, |payload| match payload {
+            ResponsePayload::LightningInfo(info) => Ok(info),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
-    async fn get_payment_state(&self, payment_id: &str) -> Result<Option<PaymentState>, ModuleError> {
+    async fn get_payment_state(
+        &self,
+        payment_id: &str,
+    ) -> Result<Option<PaymentState>, ModuleError> {
         self.request(
             RequestPayload::GetPaymentState {
                 payment_id: payment_id.to_string(),
             },
             |payload| match payload {
                 ResponsePayload::PaymentState(state) => Ok(state),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -320,7 +354,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::CheckTransactionInMempool { tx_hash: *tx_hash },
             |payload| match payload {
                 ResponsePayload::CheckTransactionInMempool(b) => Ok(b),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -331,7 +367,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::GetFeeEstimate { target_blocks },
             |payload| match payload {
                 ResponsePayload::FeeEstimate(fee) => Ok(fee),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -346,17 +384,20 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::RegisterRpcEndpoint,
-            payload: RequestPayload::RegisterRpcEndpoint { method, description },
+            request_type: blvm_node::module::ipc::protocol::MessageType::RegisterRpcEndpoint,
+            payload: RequestPayload::RegisterRpcEndpoint {
+                method,
+                description,
+            },
         };
 
         let response = self.ipc_client.lock().await.request(request).await?;
         if response.success {
             Ok(())
         } else {
-            Err(ModuleError::OperationError(
-                response.error.unwrap_or_else(|| "Failed to register RPC endpoint".to_string()),
-            ))
+            Err(ModuleError::OperationError(response.error.unwrap_or_else(
+                || "Failed to register RPC endpoint".to_string(),
+            )))
         }
     }
 
@@ -364,7 +405,7 @@ impl NodeAPI for NodeApiIpc {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::UnregisterRpcEndpoint,
+            request_type: blvm_node::module::ipc::protocol::MessageType::UnregisterRpcEndpoint,
             payload: RequestPayload::UnregisterRpcEndpoint {
                 method: method.to_string(),
             },
@@ -374,9 +415,9 @@ impl NodeAPI for NodeApiIpc {
         if response.success {
             Ok(())
         } else {
-            Err(ModuleError::OperationError(
-                response.error.unwrap_or_else(|| "Failed to unregister RPC endpoint".to_string()),
-            ))
+            Err(ModuleError::OperationError(response.error.unwrap_or_else(
+                || "Failed to unregister RPC endpoint".to_string(),
+            )))
         }
     }
 
@@ -386,8 +427,8 @@ impl NodeAPI for NodeApiIpc {
     async fn register_timer(
         &self,
         _interval_seconds: u64,
-        _callback: Arc<dyn crate::module::timers::manager::TimerCallback>,
-    ) -> Result<crate::module::timers::manager::TimerId, ModuleError> {
+        _callback: Arc<dyn blvm_node::module::timers::manager::TimerCallback>,
+    ) -> Result<blvm_node::module::timers::manager::TimerId, ModuleError> {
         Err(ModuleError::OperationError(
             "Timer callbacks cannot be serialized over IPC. Use tokio::time::interval for module-side timers.".to_string(),
         ))
@@ -395,18 +436,19 @@ impl NodeAPI for NodeApiIpc {
 
     async fn cancel_timer(
         &self,
-        _timer_id: crate::module::timers::manager::TimerId,
+        _timer_id: blvm_node::module::timers::manager::TimerId,
     ) -> Result<(), ModuleError> {
         Err(ModuleError::OperationError(
-            "Timer callbacks cannot be serialized over IPC. Manage timers locally in the module.".to_string(),
+            "Timer callbacks cannot be serialized over IPC. Manage timers locally in the module."
+                .to_string(),
         ))
     }
 
     async fn schedule_task(
         &self,
         _delay_seconds: u64,
-        _callback: Arc<dyn crate::module::timers::manager::TaskCallback>,
-    ) -> Result<crate::module::timers::manager::TaskId, ModuleError> {
+        _callback: Arc<dyn blvm_node::module::timers::manager::TaskCallback>,
+    ) -> Result<blvm_node::module::timers::manager::TaskId, ModuleError> {
         Err(ModuleError::OperationError(
             "Task callbacks cannot be serialized over IPC. Use tokio::time::sleep for module-side delayed tasks.".to_string(),
         ))
@@ -415,12 +457,12 @@ impl NodeAPI for NodeApiIpc {
     // Metrics and telemetry
     async fn report_metric(
         &self,
-        metric: crate::module::metrics::manager::Metric,
+        metric: blvm_node::module::metrics::manager::Metric,
     ) -> Result<(), ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::ReportMetric,
+            request_type: blvm_node::module::ipc::protocol::MessageType::ReportMetric,
             payload: RequestPayload::ReportMetric { metric },
         };
 
@@ -429,7 +471,9 @@ impl NodeAPI for NodeApiIpc {
             Ok(())
         } else {
             Err(ModuleError::OperationError(
-                response.error.unwrap_or_else(|| "Failed to report metric".to_string()),
+                response
+                    .error
+                    .unwrap_or_else(|| "Failed to report metric".to_string()),
             ))
         }
     }
@@ -437,11 +481,11 @@ impl NodeAPI for NodeApiIpc {
     async fn get_module_metrics(
         &self,
         module_id: &str,
-    ) -> Result<Vec<crate::module::metrics::manager::Metric>, ModuleError> {
+    ) -> Result<Vec<blvm_node::module::metrics::manager::Metric>, ModuleError> {
         let correlation_id = self.next_correlation_id().await;
         let request = RequestMessage {
             correlation_id,
-            request_type: bllvm_node::module::ipc::protocol::MessageType::GetModuleMetrics,
+            request_type: blvm_node::module::ipc::protocol::MessageType::GetModuleMetrics,
             payload: RequestPayload::GetModuleMetrics {
                 module_id: module_id.to_string(),
             },
@@ -450,20 +494,21 @@ impl NodeAPI for NodeApiIpc {
         let response = self.ipc_client.lock().await.request(request).await?;
         match response.payload {
             Some(ResponsePayload::ModuleMetrics(metrics)) => Ok(metrics),
-            _ => Err(ModuleError::OperationError(
-                response.error.unwrap_or_else(|| "Failed to get module metrics".to_string()),
-            )),
+            _ => {
+                Err(ModuleError::OperationError(response.error.unwrap_or_else(
+                    || "Failed to get module metrics".to_string(),
+                )))
+            }
         }
     }
 
     async fn read_file(&self, path: String) -> Result<Vec<u8>, ModuleError> {
-        self.request(
-            RequestPayload::ReadFile { path },
-            |payload| match payload {
-                ResponsePayload::FileData(data) => Ok(data),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+        self.request(RequestPayload::ReadFile { path }, |payload| match payload {
+            ResponsePayload::FileData(data) => Ok(data),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
 
@@ -472,7 +517,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::WriteFile { path, data },
             |payload| match payload {
                 ResponsePayload::Bool(_) | ResponsePayload::SubscribeAck => Ok(()),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -483,7 +530,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::DeleteFile { path },
             |payload| match payload {
                 ResponsePayload::Bool(_) | ResponsePayload::SubscribeAck => Ok(()),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -494,7 +543,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::ListDirectory { path },
             |payload| match payload {
                 ResponsePayload::DirectoryListing(strings) => Ok(strings),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -505,7 +556,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::CreateDirectory { path },
             |payload| match payload {
                 ResponsePayload::Bool(_) | ResponsePayload::SubscribeAck => Ok(()),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -514,12 +567,14 @@ impl NodeAPI for NodeApiIpc {
     async fn get_file_metadata(
         &self,
         path: String,
-    ) -> Result<bllvm_node::module::ipc::protocol::FileMetadata, ModuleError> {
+    ) -> Result<blvm_node::module::ipc::protocol::FileMetadata, ModuleError> {
         self.request(
             RequestPayload::GetFileMetadata { path },
             |payload| match payload {
                 ResponsePayload::FileMetadata(metadata) => Ok(metadata),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -530,7 +585,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::StorageOpenTree { name },
             |payload| match payload {
                 ResponsePayload::StorageTreeId(tree_id) => Ok(tree_id),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -550,18 +607,26 @@ impl NodeAPI for NodeApiIpc {
             },
             |payload| match payload {
                 ResponsePayload::Bool(_) | ResponsePayload::SubscribeAck => Ok(()),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
 
-    async fn storage_get(&self, tree_id: String, key: Vec<u8>) -> Result<Option<Vec<u8>>, ModuleError> {
+    async fn storage_get(
+        &self,
+        tree_id: String,
+        key: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, ModuleError> {
         self.request(
             RequestPayload::StorageGet { tree_id, key },
             |payload| match payload {
                 ResponsePayload::StorageValue(data) => Ok(data),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -572,18 +637,26 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::StorageRemove { tree_id, key },
             |payload| match payload {
                 ResponsePayload::Bool(_) | ResponsePayload::SubscribeAck => Ok(()),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
 
-    async fn storage_contains_key(&self, tree_id: String, key: Vec<u8>) -> Result<bool, ModuleError> {
+    async fn storage_contains_key(
+        &self,
+        tree_id: String,
+        key: Vec<u8>,
+    ) -> Result<bool, ModuleError> {
         self.request(
             RequestPayload::StorageContainsKey { tree_id, key },
             |payload| match payload {
                 ResponsePayload::Bool(b) => Ok(b),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -594,7 +667,9 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::StorageIter { tree_id },
             |payload| match payload {
                 ResponsePayload::StorageKeyValuePairs(pairs) => Ok(pairs),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -603,7 +678,7 @@ impl NodeAPI for NodeApiIpc {
     async fn storage_transaction(
         &self,
         tree_id: String,
-        operations: Vec<bllvm_node::module::ipc::protocol::StorageOperation>,
+        operations: Vec<blvm_node::module::ipc::protocol::StorageOperation>,
     ) -> Result<(), ModuleError> {
         self.request(
             RequestPayload::StorageTransaction {
@@ -612,7 +687,9 @@ impl NodeAPI for NodeApiIpc {
             },
             |payload| match payload {
                 ResponsePayload::Bool(_) | ResponsePayload::SubscribeAck => Ok(()),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
@@ -629,31 +706,37 @@ impl NodeAPI for NodeApiIpc {
             "initialize_module should not be called by modules".to_string(),
         ))
     }
-    
-    async fn discover_modules(&self) -> Result<Vec<bllvm_node::module::traits::ModuleInfo>, ModuleError> {
-        self.request(
-            RequestPayload::DiscoverModules,
-            |payload| match payload {
-                ResponsePayload::ModuleList(modules) => Ok(modules),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
-            },
-        )
+
+    async fn discover_modules(
+        &self,
+    ) -> Result<Vec<blvm_node::module::traits::ModuleInfo>, ModuleError> {
+        self.request(RequestPayload::DiscoverModules, |payload| match payload {
+            ResponsePayload::ModuleList(modules) => Ok(modules),
+            _ => Err(ModuleError::OperationError(
+                "Unexpected response type".to_string(),
+            )),
+        })
         .await
     }
-    
-    async fn get_module_info(&self, module_id: &str) -> Result<Option<bllvm_node::module::traits::ModuleInfo>, ModuleError> {
+
+    async fn get_module_info(
+        &self,
+        module_id: &str,
+    ) -> Result<Option<blvm_node::module::traits::ModuleInfo>, ModuleError> {
         self.request(
             RequestPayload::GetModuleInfo {
                 module_id: module_id.to_string(),
             },
             |payload| match payload {
                 ResponsePayload::ModuleInfo(info) => Ok(info),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
-    
+
     async fn is_module_available(&self, module_id: &str) -> Result<bool, ModuleError> {
         self.request(
             RequestPayload::IsModuleAvailable {
@@ -661,25 +744,106 @@ impl NodeAPI for NodeApiIpc {
             },
             |payload| match payload {
                 ResponsePayload::ModuleAvailable(available) => Ok(available),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
-    
+
     async fn publish_event(
         &self,
         event_type: EventType,
         payload: EventPayload,
     ) -> Result<(), ModuleError> {
         self.request(
-            RequestPayload::PublishEvent { event_type, payload },
+            RequestPayload::PublishEvent {
+                event_type,
+                payload,
+            },
             |payload| match payload {
                 ResponsePayload::EventPublished => Ok(()),
-                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+                _ => Err(ModuleError::OperationError(
+                    "Unexpected response type".to_string(),
+                )),
             },
         )
         .await
     }
-}
 
+    // === Missing trait methods - stub implementations ===
+    async fn get_all_metrics(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<String, Vec<blvm_node::module::metrics::manager::Metric>>,
+        ModuleError,
+    > {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn call_module(
+        &self,
+        _target_module_id: Option<&str>,
+        _method: &str,
+        _params: Vec<u8>,
+    ) -> Result<Vec<u8>, ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn register_module_api(
+        &self,
+        _api: Arc<dyn blvm_node::module::inter_module::api::ModuleAPI>,
+    ) -> Result<(), ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn unregister_module_api(&self) -> Result<(), ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn send_mesh_packet_to_module(
+        &self,
+        _module_id: &str,
+        _packet_data: Vec<u8>,
+        _peer_addr: String,
+    ) -> Result<(), ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn send_mesh_packet_to_peer(
+        &self,
+        _peer_addr: String,
+        _packet_data: Vec<u8>,
+    ) -> Result<(), ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn send_stratum_v2_message_to_peer(
+        &self,
+        _peer_addr: String,
+        _message_data: Vec<u8>,
+    ) -> Result<(), ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn get_module_health(
+        &self,
+        _module_id: &str,
+    ) -> Result<Option<blvm_node::module::process::monitor::ModuleHealth>, ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn get_all_module_health(
+        &self,
+    ) -> Result<Vec<(String, blvm_node::module::process::monitor::ModuleHealth)>, ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+
+    async fn report_module_health(
+        &self,
+        _health: blvm_node::module::process::monitor::ModuleHealth,
+    ) -> Result<(), ModuleError> {
+        Err(ModuleError::OperationError("Not implemented".to_string()))
+    }
+}

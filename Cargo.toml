@@ -1,22 +1,22 @@
 [package]
-name = "bllvm-mesh"
+name = "blvm-mesh"
 version = "0.1.0"
 edition = "2021"
 authors = ["Bitcoin Commons Team"]
-description = "Commons Mesh networking module for bllvm-node"
+description = "Commons Mesh networking module for blvm-node"
 license = "MIT"
-repository = "https://github.com/BTCDecoded/bllvm-mesh"
+repository = "https://github.com/BTCDecoded/blvm-mesh"
 homepage = "https://btcdecoded.org"
 keywords = ["bitcoin", "mesh", "networking", "routing", "module"]
 categories = ["cryptography::cryptocurrencies", "network-programming"]
 
 [[bin]]
-name = "bllvm-mesh"
+name = "blvm-mesh"
 path = "src/main.rs"
 
 [dependencies]
-# bllvm-node for module system integration
-bllvm-node = { path = "../blvm-node", package = "bllvm-node" }
+# blvm-node for module system integration
+blvm-node = "0.1.0"
 
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }
@@ -38,6 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 secp256k1 = { version = "0.28", features = ["rand"] }
 sha2 = "0.10"
 hex = "0.4"
+bitcoin = "0.32"
 
 # Lightning invoice parsing (for payment verification)
 lightning-invoice = "0.2"
@@ -51,9 +52,19 @@ clap = { version = "4.0", features = ["derive"] }
 # Futures for async streams
 futures = "0.3"
 
+# Async trait support
+async-trait = "0.1"
+
 # Concurrent data structures (lock-free reads)
 dashmap = "5.5"
 lru = "0.12"
+
+# Local development: Use [patch.crates-io] to override with local paths
+# For production/CI, these patches are removed and crates.io versions are used
+[patch.crates-io]
+blvm-node = { path = "../blvm-node" }
+blvm-protocol = { path = "../blvm-protocol" }
+blvm-consensus = { path = "../blvm-consensus" }
 
 [dev-dependencies]
 # Testing

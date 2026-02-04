@@ -1,0 +1,42 @@
+[package]
+name = "blvm-messaging"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "P2P messaging via payment-gated mesh"
+keywords = ["bitcoin", "mesh", "messaging", "p2p", "chat"]
+
+[[bin]]
+name = "blvm-messaging"
+path = "src/main.rs"
+
+[dependencies]
+# Core mesh infrastructure (path dependency within workspace)
+blvm-mesh = { path = "../.." }
+
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+bincode.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+blvm-node.workspace = true
+clap.workspace = true
+
+# Messaging-specific dependencies
+chacha20poly1305 = "0.10"
+rand = "0.8"
+sha2.workspace = true
+
+[patch.crates-io]
+blvm-node = { path = "../../../blvm-node" }
+blvm-protocol = { path = "../../../blvm-protocol" }
+blvm-consensus = { path = "../../../blvm-consensus" }
+

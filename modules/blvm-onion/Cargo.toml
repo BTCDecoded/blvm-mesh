@@ -1,0 +1,37 @@
+[package]
+name = "blvm-onion"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Censorship-resistant messaging via onion routing"
+keywords = ["bitcoin", "mesh", "onion", "privacy", "censorship"]
+
+[[bin]]
+name = "blvm-onion"
+path = "src/main.rs"
+
+[dependencies]
+# Core mesh infrastructure (path dependency within workspace)
+blvm-mesh = { path = "../.." }
+
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+bincode.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+blvm-node.workspace = true
+clap.workspace = true
+
+# Onion-specific dependencies
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+rand = "0.8"
+sha2.workspace = true
+

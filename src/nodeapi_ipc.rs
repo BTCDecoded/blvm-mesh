@@ -132,6 +132,8 @@ impl NodeApiIpc {
             // Network Integration
             RequestPayload::SendMeshPacketToPeer { .. } => MessageType::SendMeshPacketToPeer,
             RequestPayload::SendStratumV2MessageToPeer { .. } => MessageType::SendStratumV2MessageToPeer,
+            RequestPayload::GetBlockTemplate { .. } => MessageType::GetBlockTemplate,
+            RequestPayload::SubmitBlock { .. } => MessageType::SubmitBlock,
             _ => MessageType::Response, // Fallback
         }
     }
@@ -951,6 +953,37 @@ impl NodeAPI for NodeApiIpc {
             RequestPayload::ReportModuleHealth { health },
             |payload| match payload {
                 ResponsePayload::HealthReported => Ok(()),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn get_block_template(
+        &self,
+        rules: Vec<String>,
+        coinbase_script: Option<Vec<u8>>,
+        coinbase_address: Option<String>,
+    ) -> Result<blvm_protocol::mining::BlockTemplate, ModuleError> {
+        self.request(
+            RequestPayload::GetBlockTemplate {
+                rules,
+                coinbase_script,
+                coinbase_address,
+            },
+            |payload| match payload {
+                ResponsePayload::BlockTemplate(template) => Ok(template),
+                _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
+            },
+        )
+        .await
+    }
+
+    async fn submit_block(&self, block: Block) -> Result<blvm_node::module::traits::SubmitBlockResult, ModuleError> {
+        self.request(
+            RequestPayload::SubmitBlock { block },
+            |payload| match payload {
+                ResponsePayload::SubmitBlockResult(result) => Ok(result),
                 _ => Err(ModuleError::OperationError("Unexpected response type".to_string())),
             },
         )

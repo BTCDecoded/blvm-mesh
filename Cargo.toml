@@ -1,63 +1,83 @@
-[package]
-name = "blvm-mesh"
+[workspace]
+members = [
+    ".",
+    "modules/blvm-onion",
+    "modules/blvm-mining-pool",
+    "modules/blvm-messaging",
+    "modules/blvm-bridge",
+]
+
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 authors = ["Bitcoin Commons Team"]
-description = "Commons Mesh networking module for blvm-node"
 license = "MIT"
 repository = "https://github.com/BTCDecoded/blvm-mesh"
 homepage = "https://btcdecoded.org"
-keywords = ["bitcoin", "mesh", "networking", "routing", "module"]
-categories = ["cryptography::cryptocurrencies", "network-programming"]
 
-[[bin]]
-name = "blvm-mesh"
-path = "src/main.rs"
-
-[dependencies]
-# blvm-node for module system integration
-blvm-node = "0.1.0"
-
-# Async runtime
+[workspace.dependencies]
+# Shared dependencies across all workspace members
 tokio = { version = "1.48", features = ["full"] }
-
-# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = "1.3"
-
-# Error handling
 anyhow = "1.0"
 thiserror = "1.0"
-
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+blvm-node = "0.1.0"
+clap = { version = "4.0", features = ["derive"] }
+sha2 = "0.10"
 
-# Cryptography
+[package]
+name = "blvm-mesh"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Payment-gated mesh networking infrastructure for blvm-node"
+keywords = ["bitcoin", "mesh", "networking", "routing", "module"]
+categories = ["cryptography::cryptocurrencies", "network-programming"]
+
+[lib]
+name = "blvm_mesh"
+path = "src/lib.rs"
+
+[[bin]]
+name = "blvm-mesh"
+path = "bin/main.rs"
+
+[dependencies]
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bincode.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+blvm-node.workspace = true
+
+# Mesh-specific dependencies
 secp256k1 = { version = "0.28", features = ["rand"] }
 sha2 = "0.10"
 hex = "0.4"
 bitcoin = "0.32"
-
-# Lightning invoice parsing (for payment verification)
 lightning-invoice = "0.2"
-
-# HTTP client
-reqwest = { version = "0.12", features = ["json"] }
-
-# Command-line argument parsing
-clap = { version = "4.0", features = ["derive"] }
-
-# Futures for async streams
-futures = "0.3"
-
-# Async trait support
-async-trait = "0.1"
-
-# Concurrent data structures (lock-free reads)
 dashmap = "5.5"
 lru = "0.12"
+reqwest = { version = "0.12", features = ["json"] }
+clap = { version = "4.0", features = ["derive"] }
+futures = "0.3"
+blvm-protocol = { path = "../blvm-protocol" }
 
 # Local development: Use [patch.crates-io] to override with local paths
 # For production/CI, these patches are removed and crates.io versions are used
@@ -69,4 +89,3 @@ blvm-consensus = { path = "../blvm-consensus" }
 [dev-dependencies]
 # Testing
 tokio-test = "0.4"
-

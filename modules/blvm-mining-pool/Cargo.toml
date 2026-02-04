@@ -1,0 +1,36 @@
+[package]
+name = "blvm-mining-pool"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Mining pool coordination via mesh routing"
+keywords = ["bitcoin", "mesh", "mining", "pool", "stratum"]
+
+[lib]
+name = "blvm_mining_pool"
+path = "src/lib.rs"
+
+[[bin]]
+name = "blvm-mining-pool"
+path = "src/main.rs"
+
+[dependencies]
+# Core mesh infrastructure (path dependency within workspace)
+blvm-mesh = { path = "../.." }
+
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+bincode.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+blvm-node.workspace = true
+clap.workspace = true
+

@@ -1,0 +1,35 @@
+[package]
+name = "blvm-bridge"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Bridge service for various connectivity types"
+keywords = ["bitcoin", "mesh", "bridge", "connectivity", "off-grid"]
+
+[lib]
+name = "blvm_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "blvm-bridge"
+path = "src/main.rs"
+
+[dependencies]
+# Core mesh infrastructure (path dependency within workspace)
+blvm-mesh = { path = "../.." }
+
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+bincode.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+blvm-node.workspace = true
+clap.workspace = true

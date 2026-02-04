@@ -4,29 +4,16 @@
 //! including payment-gated routing, traffic classification, and fee distribution.
 
 use anyhow::Result;
+use blvm_mesh::api::MeshModuleAPI;
+use blvm_mesh::client::ModuleClient;
+use blvm_mesh::manager::MeshManager;
+use blvm_mesh::nodeapi_ipc;
 use blvm_node::module::ipc::protocol::{EventMessage, EventPayload, LogLevel, ModuleMessage};
 use blvm_node::module::EventType;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info, warn};
-
-mod client;
-mod discovery;
-mod error;
-mod manager;
-mod network;
-mod nodeapi_ipc;
-mod packet;
-mod payment_proof;
-mod replay;
-mod routing;
-mod routing_policy;
-mod verifier;
-
-use client::ModuleClient;
-use error::MeshError;
-use manager::MeshManager;
 
 /// Command-line arguments for the module
 #[derive(Parser, Debug)]
@@ -135,9 +122,11 @@ async fn main() -> Result<()> {
         socket_path: socket_path.to_string_lossy().to_string(),
     };
 
-    let manager = MeshManager::new(&ctx, node_api.clone())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create mesh manager: {}", e))?;
+    let manager = Arc::new(
+        MeshManager::new(&ctx, node_api.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create mesh manager: {}", e))?,
+    );
 
     // Start mesh manager
     if let Err(e) = manager.start().await {
@@ -145,7 +134,13 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!("Mesh manager startup failed: {}", e));
     }
 
-    info!("Mesh module initialized and running");
+    // Register ModuleAPI for inter-module communication
+    // Note: register_module_api cannot be called over IPC, so we store the API locally
+    // Modules can still call the mesh API via call_module() which is supported
+    let _mesh_api = Arc::new(MeshModuleAPI::new(Arc::clone(&manager)));
+    // TODO: Register API via node's module registration mechanism when available
+    
+    info!("Mesh module initialized and running (API available via call_module)");
 
     // Event processing loop with parallel batch processing
     let mut event_receiver = client.event_receiver();

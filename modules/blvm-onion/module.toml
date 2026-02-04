@@ -1,0 +1,14 @@
+name = "blvm-onion"
+version = "0.1.0"
+description = "Censorship-resistant messaging via onion routing"
+author = "Bitcoin Commons Team"
+entry_point = "blvm-onion"
+
+capabilities = [
+    "read_blockchain",
+    "subscribe_events",
+]
+
+[dependencies]
+"blvm-mesh" = ">=0.1.0"
+

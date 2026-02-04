@@ -1,0 +1,13 @@
+name = "blvm-bridge"
+version = "0.1.0"
+description = "Bridge service for various connectivity types"
+author = "Bitcoin Commons Team"
+entry_point = "blvm-bridge"
+
+capabilities = [
+    "read_blockchain",
+    "subscribe_events",
+]
+
+[dependencies]
+"blvm-mesh" = ">=0.1.0"

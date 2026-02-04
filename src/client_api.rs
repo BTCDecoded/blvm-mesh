@@ -1,0 +1,141 @@
+//! Client helper for modules that depend on blvm-mesh
+//!
+//! Provides a convenient API for submodules to call blvm-mesh ModuleAPI via IPC.
+
+use crate::api::{
+    DiscoverRouteRequest, DiscoverRouteResponse, RegisterProtocolRequest,
+    RegisterProtocolResponse, SendPacketRequest, SendPacketResponse,
+};
+use crate::payment_proof::PaymentProof;
+use crate::routing::NodeId;
+use blvm_node::module::traits::{ModuleError, NodeAPI};
+use std::sync::Arc;
+
+/// Client helper for modules that depend on blvm-mesh
+#[derive(Clone)]
+pub struct MeshClient {
+    node_api: Arc<dyn NodeAPI>,
+    mesh_module_id: String,
+}
+
+impl MeshClient {
+    /// Create a new mesh client
+    pub fn new(node_api: Arc<dyn NodeAPI>, mesh_module_id: String) -> Self {
+        Self {
+            node_api,
+            mesh_module_id,
+        }
+    }
+
+    /// Send a packet through the mesh
+    pub async fn send_packet(
+        &self,
+        caller_module_id: &str,
+        destination: NodeId,
+        payload: Vec<u8>,
+        payment_proof: Option<PaymentProof>,
+        protocol_id: Option<String>,
+    ) -> Result<SendPacketResponse, ModuleError> {
+        let request = SendPacketRequest {
+            destination,
+            payload,
+            payment_proof,
+            protocol_id,
+            ttl: Some(3600),
+        };
+
+        let params = bincode::serialize(&request)
+            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {}", e)))?;
+
+        let response = self
+            .node_api
+            .call_module(
+                Some(&self.mesh_module_id),
+                "send_packet",
+                params,
+            )
+            .await?;
+
+        let result: SendPacketResponse = bincode::deserialize(&response)
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
+
+        Ok(result)
+    }
+
+    /// Discover a route to a destination
+    pub async fn discover_route(
+        &self,
+        caller_module_id: &str,
+        destination: NodeId,
+        max_hops: Option<u8>,
+    ) -> Result<DiscoverRouteResponse, ModuleError> {
+        let request = DiscoverRouteRequest {
+            destination,
+            max_hops,
+            timeout_seconds: Some(30),
+        };
+
+        let params = bincode::serialize(&request)
+            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {}", e)))?;
+
+        let response = self
+            .node_api
+            .call_module(
+                Some(&self.mesh_module_id),
+                "discover_route",
+                params,
+            )
+            .await?;
+
+        let result: DiscoverRouteResponse = bincode::deserialize(&response)
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
+
+        Ok(result)
+    }
+
+    /// Register a protocol handler
+    pub async fn register_protocol_handler(
+        &self,
+        caller_module_id: &str,
+        protocol_id: String,
+        handler_method: String,
+    ) -> Result<(), ModuleError> {
+        let request = RegisterProtocolRequest {
+            protocol_id,
+            handler_method,
+        };
+
+        let params = bincode::serialize(&request)
+            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {}", e)))?;
+
+        self.node_api
+            .call_module(
+                Some(&self.mesh_module_id),
+                "register_protocol_handler",
+                params,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Get node ID from mesh
+    pub async fn get_node_id(&self) -> Result<NodeId, ModuleError> {
+        let params = vec![]; // No parameters needed
+
+        let response = self
+            .node_api
+            .call_module(
+                Some(&self.mesh_module_id),
+                "get_node_id",
+                params,
+            )
+            .await?;
+
+        let node_id: NodeId = bincode::deserialize(&response)
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
+
+        Ok(node_id)
+    }
+}
+

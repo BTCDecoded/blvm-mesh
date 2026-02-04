@@ -1,0 +1,14 @@
+name = "blvm-mining-pool"
+version = "0.1.0"
+description = "Mining pool coordination via mesh routing"
+author = "Bitcoin Commons Team"
+entry_point = "blvm-mining-pool"
+
+capabilities = [
+    "read_blockchain",
+    "subscribe_events",
+]
+
+[dependencies]
+"blvm-mesh" = ">=0.1.0"
+

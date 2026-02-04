@@ -563,6 +563,19 @@ impl MeshManager {
         }
     }
 
+    /// Get node ID
+    pub fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    /// Discover route to destination (exposed for API)
+    pub async fn discover_route(&self, destination: NodeId) -> Result<Option<Vec<NodeId>>, MeshError> {
+        self.route_discovery
+            .discover_route(destination, self.node_id)
+            .await
+            .map_err(|e| MeshError::NetworkError(format!("Route discovery failed: {}", e)))
+    }
+
     /// Get or generate node ID
     /// Tries to load from storage first, otherwise generates and stores a new one
     async fn get_or_generate_node_id(node_api: &dyn NodeAPI) -> NodeId {

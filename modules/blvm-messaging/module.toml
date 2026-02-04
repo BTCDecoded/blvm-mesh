@@ -1,0 +1,14 @@
+name = "blvm-messaging"
+version = "0.1.0"
+description = "P2P messaging via payment-gated mesh"
+author = "Bitcoin Commons Team"
+entry_point = "blvm-messaging"
+
+capabilities = [
+    "read_blockchain",
+    "subscribe_events",
+]
+
+[dependencies]
+"blvm-mesh" = ">=0.1.0"
+

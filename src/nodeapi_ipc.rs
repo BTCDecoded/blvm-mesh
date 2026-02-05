@@ -787,7 +787,7 @@ impl NodeAPI for NodeApiIpc {
         .await
     }
 
-    // === Missing trait methods - stub implementations ===
+    // === NodeAPI trait methods implemented via IPC ===
     async fn get_all_metrics(
         &self,
     ) -> Result<

@@ -102,13 +102,28 @@ impl PaymentVerifier {
         };
 
         // Verify payment hash matches preimage
-        // TODO: Fix payment_hash conversion - lightning-invoice 0.2 API needs verification
-        // For now, skip payment hash verification as it's causing type conversion issues
-        // Payment verification is primarily handled by the provider anyway
-        // The payment_hash() method returns a type that needs proper conversion to [u8; 32]
-        let _payment_hash = parsed_invoice.payment_hash();
-        // let payment_hash_bytes: [u8; 32] = ...; // TODO: Fix conversion
-        // let preimage_hash = ...; // TODO: Re-enable hash comparison
+        // Calculate SHA256 of preimage to get payment hash
+        use sha2::{Digest, Sha256};
+        let preimage_hash = Sha256::digest(preimage);
+        
+        // Get payment hash from invoice
+        // lightning-invoice 0.2: payment_hash() returns &Sha256 (which wraps sha256::Hash)
+        // Convert hash to bytes via hex string (sha256::Hash Display outputs hex)
+        let invoice_payment_hash = parsed_invoice.payment_hash();
+        let hash_str = format!("{}", invoice_payment_hash.0);
+        let invoice_hash_bytes = hex::decode(hash_str).map_err(|e| {
+            MeshError::PaymentError(format!("Failed to decode payment hash: {}", e))
+        })?;
+        let mut invoice_hash_array = [0u8; 32];
+        invoice_hash_array.copy_from_slice(&invoice_hash_bytes[..32]);
+        
+        // Verify preimage hash matches invoice payment hash
+        if preimage_hash.as_slice() != invoice_hash_array.as_slice() {
+            warn!("Payment hash mismatch: preimage hash does not match invoice");
+            return Ok(VerificationResult::failure(
+                "Payment preimage hash does not match invoice payment hash".to_string(),
+            ));
+        }
 
         // Verify amount matches (if specified in invoice)
         // Note: lightning-invoice 0.2 API compatibility - amount verification is optional

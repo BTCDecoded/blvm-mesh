@@ -79,6 +79,7 @@ impl MessagingService {
             .map_err(|e| format!("Failed to serialize message: {}", e))?;
 
         // Send via mesh
+        let serialized_len = serialized.len();
         let response = self
             .mesh_client
             .send_packet(
@@ -105,7 +106,7 @@ impl MessagingService {
 
         info!(
             "Message sent: {} bytes, cost: {} sats, route: {} hops",
-            serialized.len(),
+            serialized_len,
             response.estimated_cost_sats,
             response.route_length
         );

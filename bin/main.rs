@@ -5,10 +5,9 @@
 
 use anyhow::Result;
 use blvm_mesh::api::MeshModuleAPI;
-use blvm_mesh::client::ModuleClient;
 use blvm_mesh::manager::MeshManager;
-use blvm_mesh::nodeapi_ipc;
-use blvm_node::module::ipc::protocol::{EventMessage, EventPayload, LogLevel, ModuleMessage};
+use blvm_node::module::integration::ModuleIntegration;
+use blvm_node::module::ipc::protocol::{EventMessage, EventPayload, ModuleMessage};
 use blvm_node::module::EventType;
 use clap::Parser;
 use std::path::PathBuf;
@@ -63,8 +62,8 @@ async fn main() -> Result<()> {
         module_id, socket_path
     );
 
-    // Connect to node
-    let mut client = match ModuleClient::connect(
+    // Connect to node using ModuleIntegration
+    let mut integration = match ModuleIntegration::connect(
         socket_path.clone(),
         module_id.clone(),
         "blvm-mesh".to_string(),
@@ -72,14 +71,14 @@ async fn main() -> Result<()> {
     )
     .await
     {
-        Ok(client) => client,
+        Ok(integration) => integration,
         Err(e) => {
             error!("Failed to connect to node: {}", e);
             return Err(anyhow::anyhow!("Connection failed: {}", e));
         }
     };
 
-    // Subscribe to network and payment events (46+ events as per plan)
+    // Subscribe to network and payment events
     let event_types = vec![
         // Network events
         EventType::PeerConnected,
@@ -99,16 +98,13 @@ async fn main() -> Result<()> {
         // Add more events as needed for mesh routing
     ];
 
-    if let Err(e) = client.subscribe_events(event_types).await {
+    if let Err(e) = integration.subscribe_events(event_types).await {
         error!("Failed to subscribe to events: {}", e);
         return Err(anyhow::anyhow!("Subscription failed: {}", e));
     }
 
-    // Create NodeAPI IPC wrapper
-    let node_api = Arc::new(nodeapi_ipc::NodeApiIpc::new(
-        Arc::clone(&client.ipc_client()),
-        module_id.clone(),
-    ));
+    // Get NodeAPI from integration
+    let node_api = integration.node_api();
 
     // Create mesh manager
     let ctx = blvm_node::module::traits::ModuleContext {
@@ -148,16 +144,20 @@ async fn main() -> Result<()> {
     info!("Mesh module initialized - MeshModuleAPI fully implemented with all methods ready");
 
     // Event processing loop with parallel batch processing
-    let mut event_receiver = client.event_receiver();
+    let mut event_receiver = integration.event_receiver();
     loop {
         // Collect batch of events (up to 10) for parallel processing
         let mut event_batch = Vec::with_capacity(10);
         for _ in 0..10 {
             match event_receiver.try_recv() {
                 Ok(event) => event_batch.push(event),
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                    warn!("Event channel disconnected");
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                    warn!("Event receiver lagged by {} messages", n);
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                    warn!("Event channel closed");
                     return Ok(());
                 }
             }
@@ -165,10 +165,15 @@ async fn main() -> Result<()> {
 
         // If no events in batch, wait for next event
         if event_batch.is_empty() {
-            if let Some(event) = event_receiver.recv().await {
-                event_batch.push(event);
-            } else {
-                break; // Channel closed
+            match event_receiver.recv().await {
+                Ok(event) => event_batch.push(event),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Event receiver lagged by {} messages", n);
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break; // Channel closed
+                }
             }
         }
 

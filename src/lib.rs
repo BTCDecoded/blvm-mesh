@@ -1,13 +1,11 @@
 //! Commons Mesh networking module for blvm-node
 
 pub mod api;
-pub mod client;
 pub mod client_api;
 pub mod discovery;
 pub mod error;
 pub mod manager;
 pub mod network;
-pub mod nodeapi_ipc;
 pub mod packet;
 pub mod payment_proof;
 pub mod replay;

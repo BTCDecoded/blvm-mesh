@@ -6,8 +6,7 @@
 pub mod bridge;
 
 use anyhow::Result;
-use blvm_mesh::client::ModuleClient;
-use blvm_mesh::nodeapi_ipc;
+use blvm_node::module::integration::ModuleIntegration;
 use blvm_mesh::MeshClient;
 use blvm_node::module::EventType;
 use blvm_node::module::ipc::protocol::ModuleMessage;
@@ -69,8 +68,8 @@ async fn main() -> Result<()> {
         module_id, args.bridge_mode, socket_path
     );
 
-    // Step 1: Connect to node
-    let mut client = match ModuleClient::connect(
+    // Step 1: Connect to node using ModuleIntegration
+    let mut integration = match ModuleIntegration::connect(
         socket_path.clone(),
         module_id.clone(),
         "blvm-bridge".to_string(),
@@ -78,7 +77,7 @@ async fn main() -> Result<()> {
     )
     .await
     {
-        Ok(client) => client,
+        Ok(integration) => integration,
         Err(e) => {
             error!("Failed to connect to node: {}", e);
             return Err(anyhow::anyhow!("Connection failed: {}", e));
@@ -93,16 +92,13 @@ async fn main() -> Result<()> {
         EventType::MempoolTransactionAdded,
     ];
 
-    if let Err(e) = client.subscribe_events(event_types).await {
+    if let Err(e) = integration.subscribe_events(event_types).await {
         error!("Failed to subscribe to events: {}", e);
         return Err(anyhow::anyhow!("Subscription failed: {}", e));
     }
 
-    // Create NodeAPI IPC wrapper
-    let node_api = Arc::new(nodeapi_ipc::NodeApiIpc::new(
-        Arc::clone(&client.ipc_client()),
-        module_id.clone(),
-    ));
+    // Get NodeAPI from integration
+    let node_api = integration.node_api();
 
     info!("Step 1 complete: Connected to node");
 
@@ -140,21 +136,22 @@ async fn main() -> Result<()> {
         custom => bridge::BridgeMode::Custom(custom.to_string()),
     };
 
+    let bridge_mode_clone = bridge_mode.clone();
     let bridge_service = Arc::new(BridgeService::new(
         mesh_client,
         module_id.clone(),
         bridge_mode,
     ));
 
-    info!("Step 4 complete: Bridge service initialized (mode: {:?})", bridge_mode);
+    info!("Step 4 complete: Bridge service initialized (mode: {:?})", bridge_mode_clone);
 
     info!("blvm-bridge module fully initialized and ready");
 
     // Event processing loop
-    let mut event_receiver = client.event_receiver();
+    let mut event_receiver = integration.event_receiver();
     loop {
         match event_receiver.recv().await {
-            Some(ModuleMessage::Event(event_msg)) => {
+            Ok(ModuleMessage::Event(event_msg)) => {
                 match event_msg.event_type {
                     EventType::PeerConnected => {
                         info!("Peer connected event received");
@@ -175,10 +172,13 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            Some(_) => {
+            Ok(_) => {
                 // Not an event message
             }
-            None => {
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                warn!("Event receiver lagged by {} messages", n);
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                 warn!("Event channel closed, module shutting down");
                 break;
             }

@@ -8,10 +8,9 @@ mod messaging;
 mod onion;
 
 use anyhow::Result;
-use blvm_mesh::client::ModuleClient;
-use blvm_mesh::nodeapi_ipc;
 use blvm_mesh::{MeshClient, NodeId};
 use blvm_mesh::MeshPacket;
+use blvm_node::module::integration::ModuleIntegration;
 use blvm_node::module::EventType;
 use blvm_node::module::ipc::protocol::{EventPayload, ModuleMessage};
 use clap::Parser;
@@ -20,7 +19,7 @@ use messaging::OnionMessaging;
 use onion::{OnionConfig, OnionRouteBuilder};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Command-line arguments for the module
 #[derive(Parser, Debug)]
@@ -70,8 +69,8 @@ async fn main() -> Result<()> {
         module_id, socket_path
     );
 
-    // Step 1: Connect to node
-    let mut client = match ModuleClient::connect(
+    // Step 1: Connect to node using ModuleIntegration
+    let mut integration = match ModuleIntegration::connect(
         socket_path.clone(),
         module_id.clone(),
         "blvm-onion".to_string(),
@@ -79,7 +78,7 @@ async fn main() -> Result<()> {
     )
     .await
     {
-        Ok(client) => client,
+        Ok(integration) => integration,
         Err(e) => {
             error!("Failed to connect to node: {}", e);
             return Err(anyhow::anyhow!("Connection failed: {}", e));
@@ -94,16 +93,13 @@ async fn main() -> Result<()> {
         EventType::MeshPacketReceived,
     ];
 
-    if let Err(e) = client.subscribe_events(event_types).await {
+    if let Err(e) = integration.subscribe_events(event_types).await {
         error!("Failed to subscribe to events: {}", e);
         return Err(anyhow::anyhow!("Subscription failed: {}", e));
     }
 
-    // Create NodeAPI IPC wrapper
-    let node_api = Arc::new(nodeapi_ipc::NodeApiIpc::new(
-        Arc::clone(&client.ipc_client()),
-        module_id.clone(),
-    ));
+    // Get NodeAPI from integration
+    let node_api = integration.node_api();
 
     info!("Step 1 complete: Connected to node");
 
@@ -173,10 +169,10 @@ async fn main() -> Result<()> {
     info!("blvm-onion module fully initialized and ready");
 
     // Event processing loop
-    let mut event_receiver = client.event_receiver();
+    let mut event_receiver = integration.event_receiver();
     loop {
         match event_receiver.recv().await {
-            Some(ModuleMessage::Event(event_msg)) => {
+            Ok(ModuleMessage::Event(event_msg)) => {
                 match event_msg.event_type {
                     EventType::PeerConnected => {
                         info!("Peer connected event received");
@@ -227,10 +223,13 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            Some(_) => {
+            Ok(_) => {
                 // Not an event message
             }
-            None => {
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                warn!("Event receiver lagged by {} messages", n);
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                 warn!("Event channel closed, module shutting down");
                 break;
             }

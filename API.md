@@ -1,8 +1,8 @@
-# bllvm-mesh API Documentation
+# blvm-mesh API Documentation
 
 ## Overview
 
-The `bllvm-mesh` module provides payment-gated routing and network state management for bllvm-node.
+The `blvm-mesh` module provides payment-gated routing and network state management for blvm-node.
 
 ## Core Components
 

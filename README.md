@@ -1,10 +1,10 @@
-# bllvm-mesh
+# blvm-mesh
 
-Commons Mesh networking module for bllvm-node.
+Commons Mesh networking module for blvm-node.
 
 ## Overview
 
-This module provides Commons Mesh networking capabilities for bllvm-node, including:
+This module provides Commons Mesh networking capabilities for blvm-node, including:
 - Payment-gated routing
 - Traffic classification (free vs paid)
 - Fee distribution
@@ -15,11 +15,11 @@ This module provides Commons Mesh networking capabilities for bllvm-node, includ
 
 ```bash
 # Install via cargo
-cargo install bllvm-mesh
+cargo install blvm-mesh
 
-# Or install via cargo-bllvm-module
-cargo install cargo-bllvm-module
-cargo bllvm-module install bllvm-mesh
+# Or install via cargo-blvm-module
+cargo install cargo-blvm-module
+cargo blvm-module install blvm-mesh
 ```
 
 ## Configuration
@@ -38,11 +38,11 @@ listen_addr = "0.0.0.0:8334"
 The module includes a `module.toml` manifest:
 
 ```toml
-name = "bllvm-mesh"
+name = "blvm-mesh"
 version = "0.1.0"
 description = "Commons Mesh networking module"
 author = "Bitcoin Commons Team"
-entry_point = "bllvm-mesh"
+entry_point = "blvm-mesh"
 
 capabilities = [
     "read_blockchain",

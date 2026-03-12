@@ -25,7 +25,7 @@ pub enum PaymentProof {
     #[cfg(feature = "ctv")]
     InstantSettlement {
         /// CTV covenant proof (template hash + transaction structure)
-        covenant_proof: Vec<u8>, // Serialized CovenantProof from bllvm-node
+        covenant_proof: Vec<u8>, // Serialized CovenantProof from blvm-node
         /// Output index in the covenant transaction
         output_index: u32,
         /// Merkle proof (if needed for verification)

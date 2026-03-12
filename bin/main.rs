@@ -1,6 +1,6 @@
-//! bllvm-mesh - Commons Mesh networking module
+//! blvm-mesh - Commons Mesh networking module
 //!
-//! This module provides Commons Mesh networking capabilities for bllvm-node,
+//! This module provides Commons Mesh networking capabilities for blvm-node,
 //! including payment-gated routing, traffic classification, and fee distribution.
 
 use anyhow::Result;

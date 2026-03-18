@@ -213,6 +213,34 @@ impl RoutingTable {
         self.route_cache.clear(); // Clear cache on cleanup (will be repopulated as needed)
     }
 
+    /// List direct peers (node_id, address)
+    ///
+    /// Lock-free reads using DashMap - no async needed
+    pub fn list_direct_peers(&self) -> Vec<(NodeId, String)> {
+        self.direct_peers
+            .iter()
+            .map(|r| {
+                let node_id = *r.key();
+                let addr = String::from_utf8(r.value().clone()).unwrap_or_else(|_| "<invalid>".to_string());
+                (node_id, addr)
+            })
+            .collect()
+    }
+
+    /// List all routes (node_id, direct/multi-hop, hops, cost)
+    ///
+    /// Lock-free reads using DashMap - no async needed
+    pub fn list_routes(&self) -> Vec<(NodeId, bool, usize, u64)> {
+        self.routes
+            .iter()
+            .map(|r| {
+                let entry = r.value();
+                let is_direct = entry.direct_address.is_some() && entry.next_hop.is_none();
+                (entry.node_id, is_direct, entry.route_path.len(), entry.route_cost)
+            })
+            .collect()
+    }
+
     /// Get routing statistics
     ///
     /// Lock-free reads using DashMap - no async needed
@@ -272,6 +300,20 @@ mod tests {
         assert_eq!(route.node_id, node_id);
         assert!(route.direct_address.is_some());
         assert_eq!(route.route_path, vec![node_id]);
+    }
+
+    #[tokio::test]
+    async fn test_list_direct_peers() {
+        let table = RoutingTable::new(3600);
+        let node_id = [1u8; 32];
+        let address = b"127.0.0.1:3333".to_vec();
+
+        table.add_direct_peer(node_id, address);
+
+        let peers = table.list_direct_peers();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].0, node_id);
+        assert_eq!(peers[0].1, "127.0.0.1:3333");
     }
 
     #[tokio::test]

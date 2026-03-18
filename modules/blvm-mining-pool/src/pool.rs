@@ -204,6 +204,12 @@ impl PoolCoordinator {
             total_hash_rate,
         }
     }
+
+    /// List pool members (miners)
+    pub async fn list_members(&self) -> Vec<PoolMember> {
+        let members = self.members.read().await;
+        members.values().cloned().collect()
+    }
 }
 
 /// Pool statistics

@@ -63,6 +63,13 @@ pub struct RegisterProtocolResponse {
     pub success: bool,
 }
 
+/// Peer entry for get_peer_list response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerEntry {
+    pub node_id_hex: String,
+    pub address: String,
+}
+
 /// Mesh Module API implementation
 pub struct MeshModuleAPI {
     manager: Arc<MeshManager>,
@@ -104,6 +111,13 @@ impl ModuleAPI for MeshModuleAPI {
         
         match method {
             "send_packet" => {
+                if params.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+                    return Err(ModuleError::OperationError(format!(
+                        "Request too large: {} bytes (max: {} bytes)",
+                        params.len(),
+                        crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+                    )));
+                }
                 let req: SendPacketRequest = bincode::deserialize(params)
                     .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
                 
@@ -164,6 +178,13 @@ impl ModuleAPI for MeshModuleAPI {
             }
             
             "discover_route" => {
+                if params.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+                    return Err(ModuleError::OperationError(format!(
+                        "Request too large: {} bytes (max: {} bytes)",
+                        params.len(),
+                        crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+                    )));
+                }
                 let req: DiscoverRouteRequest = bincode::deserialize(params)
                     .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
                 
@@ -188,6 +209,13 @@ impl ModuleAPI for MeshModuleAPI {
             }
             
             "register_protocol_handler" => {
+                if params.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+                    return Err(ModuleError::OperationError(format!(
+                        "Request too large: {} bytes (max: {} bytes)",
+                        params.len(),
+                        crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+                    )));
+                }
                 let req: RegisterProtocolRequest = bincode::deserialize(params)
                     .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
                 
@@ -211,6 +239,28 @@ impl ModuleAPI for MeshModuleAPI {
                 Ok(bincode::serialize(&stats)?)
             }
             
+            "get_peer_list" => {
+                let peers: Vec<PeerEntry> = self.manager
+                    .list_direct_peers()
+                    .into_iter()
+                    .map(|(node_id, addr)| PeerEntry {
+                        node_id_hex: hex::encode(node_id),
+                        address: addr,
+                    })
+                    .collect();
+                Ok(bincode::serialize(&peers)?)
+            }
+            
+            "get_route_stats" => {
+                let stats = self.manager.get_stats().await;
+                Ok(bincode::serialize(&stats.routing)?)
+            }
+            
+            "get_network_stats" => {
+                let stats = self.manager.get_stats().await;
+                Ok(bincode::serialize(&stats)?)
+            }
+            
             "get_node_id" => {
                 let node_id = self.manager.node_id();
                 Ok(bincode::serialize(&node_id)?)
@@ -226,6 +276,9 @@ impl ModuleAPI for MeshModuleAPI {
             "discover_route".to_string(),
             "register_protocol_handler".to_string(),
             "get_routing_stats".to_string(),
+            "get_peer_list".to_string(),
+            "get_route_stats".to_string(),
+            "get_network_stats".to_string(),
             "get_node_id".to_string(),
         ]
     }

@@ -32,5 +32,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 async-trait.workspace = true
 blvm-node.workspace = true
+blvm-sdk = { path = "../../../blvm-sdk", default-features = false, features = ["node"] }
+blvm-sdk-macros = { path = "../../../blvm-sdk/crates/blvm-sdk-macros" }
 clap.workspace = true
 

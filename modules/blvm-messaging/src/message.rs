@@ -122,6 +122,13 @@ impl MessagingService {
     ) -> Result<Option<Vec<u8>>, String> {
         debug!("Handling incoming message: {} bytes", packet_payload.len());
 
+        if packet_payload.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(format!(
+                "Message too large: {} bytes (max: {} bytes)",
+                packet_payload.len(),
+                blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE
+            ));
+        }
         // Deserialize message
         let message: Message = bincode::deserialize(&packet_payload)
             .map_err(|e| format!("Failed to deserialize message: {}", e))?;
@@ -160,6 +167,40 @@ impl MessagingService {
     pub async fn get_outbox(&self) -> Vec<Message> {
         let outbox = self.outbox.read().await;
         outbox.values().cloned().collect()
+    }
+
+    /// List conversations (unique peers from inbox + outbox with last activity)
+    pub async fn list_conversations(&self) -> Vec<(NodeId, u64, String)> {
+        let mut peers: std::collections::HashMap<[u8; 32], (u64, bool, bool)> =
+            std::collections::HashMap::new();
+        {
+            let inbox = self.inbox.read().await;
+            for m in inbox.values() {
+                let entry = peers.entry(m.from).or_insert((0, false, false));
+                entry.0 = entry.0.max(m.timestamp);
+                entry.1 = true; // has_in
+            }
+        }
+        {
+            let outbox = self.outbox.read().await;
+            for m in outbox.values() {
+                let entry = peers.entry(m.to).or_insert((0, false, false));
+                entry.0 = entry.0.max(m.timestamp);
+                entry.2 = true; // has_out
+            }
+        }
+        peers
+            .into_iter()
+            .map(|(id, (ts, has_in, has_out))| {
+                let dir = match (has_in, has_out) {
+                    (true, true) => "both",
+                    (true, false) => "in",
+                    (false, true) => "out",
+                    _ => "-",
+                };
+                (id, ts, dir.to_string())
+            })
+            .collect()
     }
 
     /// Derive shared secret from sender and recipient node IDs

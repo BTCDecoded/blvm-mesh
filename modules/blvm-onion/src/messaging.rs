@@ -4,6 +4,10 @@ use blvm_mesh::{MeshClient, NodeId};
 use crate::encryption::OnionEncryption;
 use crate::onion::OnionRouteBuilder;
 use blvm_mesh::PaymentProof;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 /// Onion messaging handler
@@ -13,6 +17,7 @@ pub struct OnionMessaging {
     encryption: OnionEncryption,
     caller_module_id: String,
     node_id: NodeId, // Cache node ID
+    circuits: Arc<RwLock<HashMap<[u8; 32], Vec<NodeId>>>>, // circuit_id -> route
 }
 
 impl OnionMessaging {
@@ -33,7 +38,42 @@ impl OnionMessaging {
             encryption,
             caller_module_id,
             node_id,
+            circuits: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Create a circuit to destination (route is built and stored)
+    pub async fn create_circuit(
+        &self,
+        destination: NodeId,
+        available_nodes: Vec<NodeId>,
+    ) -> Result<[u8; 32], String> {
+        let route = self
+            .route_builder
+            .build_route(self.node_id, destination, available_nodes)
+            .await?;
+        self.route_builder.validate_route(&route)?;
+        let mut hasher = Sha256::new();
+        hasher.update(&route[0]);
+        hasher.update(&route[route.len() - 1]);
+        hasher.update(&std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_le_bytes());
+        let hash = hasher.finalize();
+        let mut circuit_id = [0u8; 32];
+        circuit_id.copy_from_slice(&hash);
+        let mut circuits = self.circuits.write().await;
+        circuits.insert(circuit_id, route.clone());
+        info!("Created circuit {:x?} ({} hops)", &circuit_id[..8], route.len());
+        Ok(circuit_id)
+    }
+
+    /// List active circuits
+    pub async fn list_circuits(&self) -> Vec<([u8; 32], Vec<NodeId>)> {
+        let circuits = self.circuits.read().await;
+        circuits.iter().map(|(id, route)| (*id, route.clone())).collect()
     }
 
     /// Send a message via onion routing
@@ -120,6 +160,13 @@ impl OnionMessaging {
     ) -> Result<Option<Vec<u8>>, String> {
         debug!("Handling incoming onion packet: {} bytes", packet_payload.len());
 
+        if packet_payload.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(format!(
+                "Onion packet too large: {} bytes (max: {} bytes)",
+                packet_payload.len(),
+                blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE
+            ));
+        }
         // Deserialize onion message
         let onion_message: crate::encryption::OnionMessage = bincode::deserialize(&packet_payload)
             .map_err(|e| format!("Failed to deserialize onion message: {}", e))?;

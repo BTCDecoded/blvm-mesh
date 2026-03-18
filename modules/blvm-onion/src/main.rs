@@ -3,87 +3,45 @@
 //! This module provides onion routing capabilities for censorship-resistant messaging
 //! through Bitcoin nodes using the blvm-mesh infrastructure.
 
-mod encryption;
-mod messaging;
-mod onion;
-
 use anyhow::Result;
-use blvm_mesh::{MeshClient, NodeId};
-use blvm_mesh::MeshPacket;
+use blvm_mesh::{MeshClient, MeshPacket};
 use blvm_node::module::integration::ModuleIntegration;
+use blvm_node::module::ipc::protocol::{
+    EventPayload, InvocationResultMessage, InvocationResultPayload, InvocationType, ModuleMessage,
+};
 use blvm_node::module::EventType;
-use blvm_node::module::ipc::protocol::{EventPayload, ModuleMessage};
-use clap::Parser;
-use encryption::OnionEncryption;
-use messaging::OnionMessaging;
-use onion::{OnionConfig, OnionRouteBuilder};
-use std::path::PathBuf;
+use blvm_onion::OnionModule;
+use blvm_onion::{OnionConfig, OnionEncryption, OnionMessaging, OnionRouteBuilder};
+use blvm_sdk::module::{ModuleBootstrap, ModuleDb};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-/// Command-line arguments for the module
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Module ID (provided by node)
-    #[arg(long)]
-    module_id: Option<String>,
-
-    /// IPC socket path (provided by node)
-    #[arg(long)]
-    socket_path: Option<PathBuf>,
-
-    /// Data directory (provided by node)
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let args = Args::parse();
-
-    // Get module ID
-    let module_id = args
-        .module_id
-        .or_else(|| std::env::var("MODULE_NAME").ok())
-        .unwrap_or_else(|| "blvm-onion".to_string());
-
-    // Get socket path
-    let socket_path = args
-        .socket_path
-        .or_else(|| std::env::var("BLVM_MODULE_SOCKET").ok().map(PathBuf::from))
-        .or_else(|| {
-            std::env::var("MODULE_SOCKET_DIR")
-                .ok()
-                .map(|d| PathBuf::from(d).join("modules.sock"))
-        })
-        .unwrap_or_else(|| PathBuf::from("data/modules/modules.sock"));
+    let bootstrap = ModuleBootstrap::from_env_or_defaults(
+        "blvm-onion",
+        "data/modules/blvm-onion.sock",
+        "data/modules/blvm-onion",
+    );
 
     info!(
         "blvm-onion module starting... (module_id: {}, socket: {:?})",
-        module_id, socket_path
+        bootstrap.module_id, bootstrap.socket_path
     );
 
-    // Step 1: Connect to node using ModuleIntegration
-    let mut integration = match ModuleIntegration::connect(
-        socket_path.clone(),
-        module_id.clone(),
-        "blvm-onion".to_string(),
-        env!("CARGO_PKG_VERSION").to_string(),
+    let mut integration = ModuleIntegration::connect(
+        bootstrap.socket_path.clone(),
+        bootstrap.module_id.clone(),
+        "blvm-onion".into(),
+        env!("CARGO_PKG_VERSION").into(),
+        Some(OnionModule::cli_spec()),
     )
     .await
-    {
-        Ok(integration) => integration,
-        Err(e) => {
-            error!("Failed to connect to node: {}", e);
-            return Err(anyhow::anyhow!("Connection failed: {}", e));
-        }
-    };
+    .map_err(|e| anyhow::anyhow!("Connection failed: {}", e))?;
 
     // Subscribe to events we need
     let event_types = vec![
@@ -93,10 +51,7 @@ async fn main() -> Result<()> {
         EventType::MeshPacketReceived,
     ];
 
-    if let Err(e) = integration.subscribe_events(event_types).await {
-        error!("Failed to subscribe to events: {}", e);
-        return Err(anyhow::anyhow!("Subscription failed: {}", e));
-    }
+    integration.subscribe_events(event_types).await.map_err(|e| anyhow::anyhow!("Subscription failed: {}", e))?;
 
     // Get NodeAPI from integration
     let node_api = integration.node_api();
@@ -117,7 +72,7 @@ async fn main() -> Result<()> {
     // Step 3: Register protocol handler
     if let Err(e) = mesh_client
         .register_protocol_handler(
-            &module_id,
+            &bootstrap.module_id,
             "onion-v1".to_string(),
             "handle_incoming_packet".to_string(),
         )
@@ -158,7 +113,7 @@ async fn main() -> Result<()> {
             mesh_client,
             route_builder,
             onion_encryption,
-            module_id.clone(),
+            bootstrap.module_id.clone(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create onion messaging: {}", e))?,
@@ -168,10 +123,55 @@ async fn main() -> Result<()> {
 
     info!("blvm-onion module fully initialized and ready");
 
-    // Event processing loop
+    let db = ModuleDb::open(&bootstrap.data_dir)?;
+    let invocation_ctx = blvm_sdk::module::runner::InvocationContext::new(db.as_db());
+    let module = OnionModule {
+        onion_messaging: Arc::clone(&onion_messaging),
+    };
+
     let mut event_receiver = integration.event_receiver();
+    let mut invocation_rx = integration.invocation_receiver().expect("CLI spec provided");
+
     loop {
-        match event_receiver.recv().await {
+        tokio::select! {
+            inv = invocation_rx.recv() => {
+                if let Some((invocation, result_tx)) = inv {
+                    let result = match &invocation.invocation_type {
+                        InvocationType::Cli { subcommand, args } => {
+                            match module.dispatch_cli(&invocation_ctx, subcommand, args) {
+                                Ok(stdout) => InvocationResultMessage {
+                                    correlation_id: invocation.correlation_id,
+                                    success: true,
+                                    payload: Some(InvocationResultPayload::Cli {
+                                        stdout,
+                                        stderr: String::new(),
+                                        exit_code: 0,
+                                    }),
+                                    error: None,
+                                },
+                                Err(e) => InvocationResultMessage {
+                                    correlation_id: invocation.correlation_id,
+                                    success: false,
+                                    payload: None,
+                                    error: Some(e.to_string()),
+                                },
+                            }
+                        }
+                        _ => InvocationResultMessage {
+                            correlation_id: invocation.correlation_id,
+                            success: false,
+                            payload: None,
+                            error: Some("RPC not implemented".to_string()),
+                        },
+                    };
+                    let _ = result_tx.send(result);
+                } else {
+                    info!("Invocation channel closed, module unloading");
+                    break;
+                }
+            }
+            ev = event_receiver.recv() => {
+                match ev {
             Ok(ModuleMessage::Event(event_msg)) => {
                 match event_msg.event_type {
                     EventType::PeerConnected => {
@@ -189,8 +189,10 @@ async fn main() -> Result<()> {
                             peer_addr: _,
                         } = &event_msg.payload
                         {
-                            // Try to deserialize as MeshPacket
-                            if let Ok(packet) = bincode::deserialize::<MeshPacket>(packet_data) {
+                            // Enforce payload size limit before deserialization (S-012)
+                            if packet_data.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+                                tracing::debug!("Dropping oversized mesh packet: {} bytes", packet_data.len());
+                            } else if let Ok(packet) = bincode::deserialize::<MeshPacket>(packet_data) {
                                 // Check if it's an onion-v1 packet
                                 if let Some(ref metadata) = packet.metadata {
                                     if metadata.protocol.as_ref().map(|s| s == "onion-v1").unwrap_or(false) {
@@ -223,15 +225,15 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            Ok(_) => {
-                // Not an event message
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                warn!("Event receiver lagged by {} messages", n);
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                warn!("Event channel closed, module shutting down");
-                break;
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Event receiver lagged by {} messages", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    warn!("Event channel closed, module shutting down");
+                    break;
+                }
+                }
             }
         }
     }

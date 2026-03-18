@@ -6,79 +6,44 @@
 pub mod pool;
 
 use anyhow::Result;
-use blvm_node::module::integration::ModuleIntegration;
 use blvm_mesh::MeshClient;
+use blvm_mining_pool::MiningPoolModule;
+use blvm_mining_pool::PoolCoordinator;
+use blvm_node::module::integration::ModuleIntegration;
+use blvm_node::module::ipc::protocol::{
+    InvocationResultMessage, InvocationResultPayload, InvocationType, ModuleMessage,
+};
 use blvm_node::module::EventType;
-use blvm_node::module::ipc::protocol::ModuleMessage;
-use clap::Parser;
-use pool::PoolCoordinator;
-use std::path::PathBuf;
+use blvm_sdk::module::{ModuleBootstrap, ModuleDb};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-/// Command-line arguments for the module
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Module ID (provided by node)
-    #[arg(long)]
-    module_id: Option<String>,
-
-    /// IPC socket path (provided by node)
-    #[arg(long)]
-    socket_path: Option<PathBuf>,
-
-    /// Data directory (provided by node)
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let args = Args::parse();
-
-    // Get module ID
-    let module_id = args
-        .module_id
-        .or_else(|| std::env::var("MODULE_NAME").ok())
-        .unwrap_or_else(|| "blvm-mining-pool".to_string());
-
-    // Get socket path
-    let socket_path = args
-        .socket_path
-        .or_else(|| std::env::var("BLVM_MODULE_SOCKET").ok().map(PathBuf::from))
-        .or_else(|| {
-            std::env::var("MODULE_SOCKET_DIR")
-                .ok()
-                .map(|d| PathBuf::from(d).join("modules.sock"))
-        })
-        .unwrap_or_else(|| PathBuf::from("data/modules/modules.sock"));
+    let bootstrap = ModuleBootstrap::from_env_or_defaults(
+        "blvm-mining-pool",
+        "data/modules/blvm-mining-pool.sock",
+        "data/modules/blvm-mining-pool",
+    );
 
     info!(
         "blvm-mining-pool module starting... (module_id: {}, socket: {:?})",
-        module_id, socket_path
+        bootstrap.module_id, bootstrap.socket_path
     );
 
-    // Step 1: Connect to node using ModuleIntegration
-    let mut integration = match ModuleIntegration::connect(
-        socket_path.clone(),
-        module_id.clone(),
-        "blvm-mining-pool".to_string(),
-        env!("CARGO_PKG_VERSION").to_string(),
+    let mut integration = ModuleIntegration::connect(
+        bootstrap.socket_path.clone(),
+        bootstrap.module_id.clone(),
+        "blvm-mining-pool".into(),
+        env!("CARGO_PKG_VERSION").into(),
+        Some(MiningPoolModule::cli_spec()),
     )
     .await
-    {
-        Ok(integration) => integration,
-        Err(e) => {
-            error!("Failed to connect to node: {}", e);
-            return Err(anyhow::anyhow!("Connection failed: {}", e));
-        }
-    };
+    .map_err(|e| anyhow::anyhow!("Connection failed: {}", e))?;
 
     // Subscribe to events
     let event_types = vec![
@@ -88,10 +53,7 @@ async fn main() -> Result<()> {
         EventType::MempoolTransactionAdded,
     ];
 
-    if let Err(e) = integration.subscribe_events(event_types).await {
-        error!("Failed to subscribe to events: {}", e);
-        return Err(anyhow::anyhow!("Subscription failed: {}", e));
-    }
+    integration.subscribe_events(event_types).await.map_err(|e| anyhow::anyhow!("Subscription failed: {}", e))?;
 
     // Get NodeAPI from integration
     let node_api = integration.node_api();
@@ -112,7 +74,7 @@ async fn main() -> Result<()> {
     // Step 3: Register protocol handler
     if let Err(e) = mesh_client
         .register_protocol_handler(
-            &module_id,
+            &bootstrap.module_id,
             "mining-pool-v1".to_string(),
             "handle_pool_message".to_string(),
         )
@@ -125,20 +87,65 @@ async fn main() -> Result<()> {
     info!("Step 3 complete: Protocol handler registered (mining-pool-v1)");
 
     // Step 4: Initialize pool coordinator
-    let pool_coordinator = Arc::new(PoolCoordinator::new(
+    let pool_coordinator: Arc<PoolCoordinator> = Arc::new(PoolCoordinator::new(
         mesh_client,
-        module_id.clone(),
+        bootstrap.module_id.clone(),
     ));
 
     info!("Step 4 complete: Pool coordinator initialized");
 
     info!("blvm-mining-pool module fully initialized and ready");
 
-    // Event processing loop
+    let db = ModuleDb::open(&bootstrap.data_dir)?;
+    let invocation_ctx = blvm_sdk::module::runner::InvocationContext::new(db.as_db());
+    let module = MiningPoolModule {
+        pool_coordinator: Arc::clone(&pool_coordinator),
+    };
+
     let mut event_receiver = integration.event_receiver();
+    let mut invocation_rx = integration.invocation_receiver().expect("CLI spec provided");
+
     loop {
-        match event_receiver.recv().await {
-            Ok(ModuleMessage::Event(event_msg)) => {
+        tokio::select! {
+            inv = invocation_rx.recv() => {
+                if let Some((invocation, result_tx)) = inv {
+                    let result = match &invocation.invocation_type {
+                        InvocationType::Cli { subcommand, args } => {
+                            match module.dispatch_cli(&invocation_ctx, subcommand, args) {
+                                Ok(stdout) => InvocationResultMessage {
+                                    correlation_id: invocation.correlation_id,
+                                    success: true,
+                                    payload: Some(InvocationResultPayload::Cli {
+                                        stdout,
+                                        stderr: String::new(),
+                                        exit_code: 0,
+                                    }),
+                                    error: None,
+                                },
+                                Err(e) => InvocationResultMessage {
+                                    correlation_id: invocation.correlation_id,
+                                    success: false,
+                                    payload: None,
+                                    error: Some(e.to_string()),
+                                },
+                            }
+                        }
+                        _ => InvocationResultMessage {
+                            correlation_id: invocation.correlation_id,
+                            success: false,
+                            payload: None,
+                            error: Some("RPC not implemented".to_string()),
+                        },
+                    };
+                    let _ = result_tx.send(result);
+                } else {
+                    info!("Invocation channel closed, module unloading");
+                    break;
+                }
+            }
+            ev = event_receiver.recv() => {
+                match ev {
+                Ok(ModuleMessage::Event(event_msg)) => {
                 match event_msg.event_type {
                     EventType::PeerConnected => {
                         info!("Peer connected event received");
@@ -160,15 +167,15 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            Ok(_) => {
-                // Not an event message
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                warn!("Event receiver lagged by {} messages", n);
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                warn!("Event channel closed, module shutting down");
-                break;
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Event receiver lagged by {} messages", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    warn!("Event channel closed, module shutting down");
+                    break;
+                }
+                }
             }
         }
     }

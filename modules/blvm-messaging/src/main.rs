@@ -3,94 +3,54 @@
 //! This module provides P2P messaging capabilities using blvm-mesh
 //! for decentralized, payment-gated messaging.
 
-mod message;
-
 use anyhow::Result;
-use blvm_node::module::integration::ModuleIntegration;
 use blvm_mesh::{MeshClient, MeshPacket, NodeId};
+use blvm_messaging::MessagingModule;
+use blvm_messaging::MessagingService;
+use blvm_node::module::integration::ModuleIntegration;
+use blvm_node::module::ipc::protocol::{
+    EventPayload, InvocationResultMessage, InvocationResultPayload, InvocationType, ModuleMessage,
+};
 use blvm_node::module::EventType;
-use blvm_node::module::ipc::protocol::{EventPayload, ModuleMessage};
-use clap::Parser;
-use message::MessagingService;
-use std::path::PathBuf;
+use blvm_sdk::module::{ModuleBootstrap, ModuleDb};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-/// Command-line arguments for the module
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Module ID (provided by node)
-    #[arg(long)]
-    module_id: Option<String>,
-
-    /// IPC socket path (provided by node)
-    #[arg(long)]
-    socket_path: Option<PathBuf>,
-
-    /// Data directory (provided by node)
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let args = Args::parse();
-
-    // Get module ID
-    let module_id = args
-        .module_id
-        .or_else(|| std::env::var("MODULE_NAME").ok())
-        .unwrap_or_else(|| "blvm-messaging".to_string());
-
-    // Get socket path
-    let socket_path = args
-        .socket_path
-        .or_else(|| std::env::var("BLVM_MODULE_SOCKET").ok().map(PathBuf::from))
-        .or_else(|| {
-            std::env::var("MODULE_SOCKET_DIR")
-                .ok()
-                .map(|d| PathBuf::from(d).join("modules.sock"))
-        })
-        .unwrap_or_else(|| PathBuf::from("data/modules/modules.sock"));
+    let bootstrap = ModuleBootstrap::from_env_or_defaults(
+        "blvm-messaging",
+        "data/modules/blvm-messaging.sock",
+        "data/modules/blvm-messaging",
+    );
 
     info!(
         "blvm-messaging module starting... (module_id: {}, socket: {:?})",
-        module_id, socket_path
+        bootstrap.module_id, bootstrap.socket_path
     );
 
-    // Step 1: Connect to node
-    let mut integration = match ModuleIntegration::connect(
-        socket_path.clone(),
-        module_id.clone(),
-        "blvm-messaging".to_string(),
-        env!("CARGO_PKG_VERSION").to_string(),
+    let mut integration = ModuleIntegration::connect(
+        bootstrap.socket_path.clone(),
+        bootstrap.module_id.clone(),
+        "blvm-messaging".into(),
+        env!("CARGO_PKG_VERSION").into(),
+        Some(MessagingModule::cli_spec()),
     )
     .await
-    {
-        Ok(integration) => integration,
-        Err(e) => {
-            error!("Failed to connect to node: {}", e);
-            return Err(anyhow::anyhow!("Connection failed: {}", e));
-        }
-    };
+    .map_err(|e| anyhow::anyhow!("Connection failed: {}", e))?;
 
-    // Subscribe to events
-    let event_types = vec![
-        EventType::PeerConnected,
-        EventType::PeerDisconnected,
-        EventType::MeshPacketReceived,
-    ];
-
-    if let Err(e) = integration.subscribe_events(event_types).await {
-        error!("Failed to subscribe to events: {}", e);
-        return Err(anyhow::anyhow!("Subscription failed: {}", e));
-    }
+    integration
+        .subscribe_events(vec![
+            EventType::PeerConnected,
+            EventType::PeerDisconnected,
+            EventType::MeshPacketReceived,
+        ])
+        .await
+        .map_err(|e| anyhow::anyhow!("Subscription failed: {}", e))?;
 
     // Create NodeAPI IPC wrapper
     let node_api = integration.node_api();
@@ -111,7 +71,7 @@ async fn main() -> Result<()> {
     // Step 3: Register protocol handler
     if let Err(e) = mesh_client
         .register_protocol_handler(
-            &module_id,
+            &bootstrap.module_id,
             "messaging-v1".to_string(),
             "handle_message".to_string(),
         )
@@ -139,7 +99,7 @@ async fn main() -> Result<()> {
     let messaging_service = Arc::new(
         MessagingService::new(
             mesh_client,
-            module_id.clone(),
+            bootstrap.module_id.clone(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create messaging service: {}", e))?,
@@ -149,11 +109,56 @@ async fn main() -> Result<()> {
 
     info!("blvm-messaging module fully initialized and ready");
 
-    // Event processing loop
+    let db = ModuleDb::open(&bootstrap.data_dir)?;
+    let invocation_ctx = blvm_sdk::module::runner::InvocationContext::new(db.as_db());
+    let module = MessagingModule {
+        messaging_service: Arc::clone(&messaging_service),
+    };
+
     let mut event_receiver = integration.event_receiver();
+    let mut invocation_rx = integration.invocation_receiver().expect("CLI spec provided");
+
     loop {
-        match event_receiver.recv().await {
-            Ok(ModuleMessage::Event(event_msg)) => {
+        tokio::select! {
+            inv = invocation_rx.recv() => {
+                if let Some((invocation, result_tx)) = inv {
+                    let result = match &invocation.invocation_type {
+                        InvocationType::Cli { subcommand, args } => {
+                            match module.dispatch_cli(&invocation_ctx, subcommand, args) {
+                                Ok(stdout) => InvocationResultMessage {
+                                    correlation_id: invocation.correlation_id,
+                                    success: true,
+                                    payload: Some(InvocationResultPayload::Cli {
+                                        stdout,
+                                        stderr: String::new(),
+                                        exit_code: 0,
+                                    }),
+                                    error: None,
+                                },
+                                Err(e) => InvocationResultMessage {
+                                    correlation_id: invocation.correlation_id,
+                                    success: false,
+                                    payload: None,
+                                    error: Some(e.to_string()),
+                                },
+                            }
+                        }
+                        _ => InvocationResultMessage {
+                            correlation_id: invocation.correlation_id,
+                            success: false,
+                            payload: None,
+                            error: Some("RPC not implemented".to_string()),
+                        },
+                    };
+                    let _ = result_tx.send(result);
+                } else {
+                    info!("Invocation channel closed, module unloading");
+                    break;
+                }
+            }
+            ev = event_receiver.recv() => {
+                match ev {
+                Ok(ModuleMessage::Event(event_msg)) => {
                 match event_msg.event_type {
                     EventType::PeerConnected => {
                         info!("Peer connected event received");
@@ -167,8 +172,10 @@ async fn main() -> Result<()> {
                             peer_addr: _,
                         } = &event_msg.payload
                         {
-                            // Try to deserialize as MeshPacket
-                            if let Ok(packet) = bincode::deserialize::<MeshPacket>(packet_data) {
+                            // Enforce payload size limit before deserialization (S-012)
+                            if packet_data.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+                                debug!("Dropping oversized mesh packet: {} bytes", packet_data.len());
+                            } else if let Ok(packet) = bincode::deserialize::<MeshPacket>(packet_data) {
                                 // Check if it's a messaging-v1 packet
                                 if let Some(ref metadata) = packet.metadata {
                                     if metadata.protocol.as_ref().map(|s| s == "messaging-v1").unwrap_or(false) {
@@ -198,15 +205,15 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            Ok(_) => {
-                // Not an event message
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                warn!("Event receiver lagged by {} messages", n);
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                warn!("Event channel closed, module shutting down");
-                break;
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Event receiver lagged by {} messages", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    warn!("Event channel closed, module shutting down");
+                    break;
+                }
+                }
             }
         }
     }

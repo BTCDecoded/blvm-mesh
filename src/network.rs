@@ -4,7 +4,7 @@
 //! for sending and receiving mesh packets.
 
 use crate::error::MeshError;
-use crate::packet::{MeshPacket, MESH_PACKET_MAGIC};
+use crate::packet::{MeshPacket, MESH_PACKET_MAGIC, MAX_BINCODE_PAYLOAD_SIZE};
 use bincode;
 use tracing::{debug, warn};
 
@@ -23,9 +23,17 @@ pub fn deserialize_mesh_packet(data: &[u8]) -> Result<MeshPacket, MeshError> {
         ));
     }
 
-    // Deserialize packet (skip magic bytes if they're part of the data)
-    // In production, magic bytes might be stripped by network layer
-    let packet: MeshPacket = bincode::deserialize(data)
+    // Enforce payload size limit before deserialization (S-012)
+    if data.len() > MAX_BINCODE_PAYLOAD_SIZE {
+        return Err(MeshError::InvalidPacket(format!(
+            "Packet too large: {} bytes (max: {} bytes)",
+            data.len(),
+            MAX_BINCODE_PAYLOAD_SIZE
+        )));
+    }
+
+    // Deserialize packet (skip magic bytes - serialize prepends them)
+    let packet: MeshPacket = bincode::deserialize(&data[4..])
         .map_err(|e| MeshError::InvalidPacket(format!("Failed to deserialize packet: {}", e)))?;
 
     Ok(packet)
@@ -78,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize() {
-        let packet = MeshPacket::new(PacketType::Paid, [1u8; 32], [2u8; 32], vec![1, 2, 3, 4]);
+        let packet = MeshPacket::new(PacketType::BitcoinP2P, [1u8; 32], [2u8; 32], vec![1, 2, 3, 4]);
 
         let serialized = serialize_mesh_packet(&packet).unwrap();
         assert!(is_mesh_packet(&serialized));

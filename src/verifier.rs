@@ -205,6 +205,13 @@ impl PaymentVerifier {
                 "Empty CTV covenant proof".to_string(),
             ));
         }
+        if covenant_proof.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Ok(VerificationResult::failure(format!(
+                "Covenant proof too large: {} bytes (max: {} bytes)",
+                covenant_proof.len(),
+                crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+            )));
+        }
 
         // Deserialize CovenantProof from bytes
         use blvm_node::payment::covenant::CovenantProof;

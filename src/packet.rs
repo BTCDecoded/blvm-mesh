@@ -17,6 +17,9 @@ pub const MESH_PACKET_VERSION: u8 = 1;
 /// Maximum packet size (1MB)
 pub const MAX_PACKET_SIZE: usize = 1_000_000;
 
+/// Maximum bincode payload size (256KB) - prevents DoS via unbounded deserialization (S-012)
+pub const MAX_BINCODE_PAYLOAD_SIZE: usize = 256 * 1024;
+
 /// Mesh packet type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PacketType {
@@ -82,7 +85,7 @@ impl MeshPacket {
             packet_type,
             source,
             destination,
-            route: vec![source], // Initial route starts with source
+            route: vec![source, destination], // Route: source -> destination
             sequence: 0,         // Will be set by sender
             timestamp: now,
             payment_proof: None,

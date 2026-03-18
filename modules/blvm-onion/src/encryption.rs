@@ -150,6 +150,13 @@ impl OnionEncryption {
     ) -> Result<(Option<NodeId>, Vec<u8>), String> {
         debug!("Decrypting onion layer for node {:x?}", &my_node_id[..8]);
 
+        if encrypted.encrypted_payload.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(format!(
+                "Encrypted payload too large: {} bytes (max: {} bytes)",
+                encrypted.encrypted_payload.len(),
+                blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE
+            ));
+        }
         // Derive key for this node
         let key = Self::derive_key(&my_node_id);
         let cipher = ChaCha20Poly1305::new(&key);
@@ -167,6 +174,13 @@ impl OnionEncryption {
                 format!("Decryption failed: {}", e)
             })?;
 
+        if decrypted_bytes.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(format!(
+                "Decrypted layer too large: {} bytes (max: {} bytes)",
+                decrypted_bytes.len(),
+                blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE
+            ));
+        }
         // Deserialize layer
         let layer: OnionLayer = bincode::deserialize(&decrypted_bytes)
             .map_err(|e| format!("Failed to deserialize layer: {}", e))?;

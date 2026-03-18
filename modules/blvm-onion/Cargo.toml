@@ -10,6 +10,10 @@ homepage.workspace = true
 description = "Censorship-resistant messaging via onion routing"
 keywords = ["bitcoin", "mesh", "onion", "privacy", "censorship"]
 
+[lib]
+name = "blvm_onion"
+path = "src/lib.rs"
+
 [[bin]]
 name = "blvm-onion"
 path = "src/main.rs"
@@ -28,10 +32,12 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 async-trait.workspace = true
 blvm-node.workspace = true
-clap.workspace = true
+blvm-sdk = { path = "../../../blvm-sdk", default-features = false, features = ["node"] }
+blvm-sdk-macros = { path = "../../../blvm-sdk/crates/blvm-sdk-macros" }
 
 # Onion-specific dependencies
 chacha20poly1305 = { version = "0.10", features = ["std"] }
+hex = "0.4"
 rand = "0.8"
 sha2.workspace = true
 

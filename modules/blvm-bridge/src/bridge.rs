@@ -162,6 +162,13 @@ impl BridgeService {
     ) -> Result<Option<BridgePacket>, String> {
         debug!("Handling incoming bridge packet: {} bytes", packet_payload.len());
 
+        if packet_payload.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(format!(
+                "Bridge packet too large: {} bytes (max: {} bytes)",
+                packet_payload.len(),
+                blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE
+            ));
+        }
         // Deserialize bridge packet
         let bridge_packet: BridgePacket = bincode::deserialize(&packet_payload)
             .map_err(|e| format!("Failed to deserialize bridge packet: {}", e))?;
@@ -212,6 +219,46 @@ impl BridgeService {
             connected_bridges: bridges.len(),
             queued_packets: queue.len(),
         }
+    }
+
+    /// List connected bridges
+    pub async fn list_bridges(&self) -> Vec<BridgeConnection> {
+        let bridges = self.connected_bridges.read().await;
+        bridges.values().cloned().collect()
+    }
+
+    /// Add a bridge connection by node_id (hex) and connection type
+    pub async fn add_bridge(
+        &self,
+        node_id_hex: &str,
+        connection_type: &str,
+        bandwidth_bps: u64,
+    ) -> Result<(), String> {
+        let node_id = hex::decode(node_id_hex)
+            .map_err(|e| format!("Invalid node_id hex: {}", e))?;
+        if node_id.len() != 32 {
+            return Err("node_id must be 64 hex chars (32 bytes)".to_string());
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&node_id);
+        let conn_type = match connection_type.to_lowercase().as_str() {
+            "satellite" => BridgeMode::Satellite,
+            "radio" => BridgeMode::Radio,
+            "internet" => BridgeMode::Internet,
+            other => BridgeMode::Custom(other.to_string()),
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let connection = BridgeConnection {
+            node_id: arr,
+            connection_type: conn_type,
+            last_seen: now,
+            bandwidth_bps,
+        };
+        self.register_bridge(connection).await;
+        Ok(())
     }
 }
 

@@ -1,5 +1,7 @@
 //! Mesh manager - main coordination logic
 
+const MESH_STATE_TREE: &str = "mesh_state";
+
 use crate::discovery::RouteDiscovery;
 use crate::error::MeshError;
 use crate::network::{deserialize_mesh_packet, extract_mesh_packet, serialize_mesh_packet};
@@ -15,7 +17,7 @@ use blvm_node::module::traits::NodeAPI;
 use blvm_node::module::EventType;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace, warn};
 
@@ -32,8 +34,8 @@ pub struct MeshStats {
 pub struct MeshManager {
     /// Whether mesh is enabled
     enabled: bool,
-    /// Routing policy engine
-    routing_policy: RoutingPolicyEngine,
+    /// Routing policy engine (RwLock for runtime set_mode)
+    routing_policy: RwLock<RoutingPolicyEngine>,
     /// Payment verifier for payment-gated routing
     payment_verifier: PaymentVerifier,
     /// Replay prevention for payment proofs
@@ -58,7 +60,7 @@ impl MeshManager {
         let mode_str = ctx.get_config_or("mesh.mode", "payment_gated");
         let mode = MeshMode::from(mode_str.as_str());
 
-        let routing_policy = RoutingPolicyEngine::new(mode);
+        let routing_policy = RwLock::new(RoutingPolicyEngine::new(mode));
         let payment_verifier = PaymentVerifier::new(Arc::clone(&node_api));
 
         // Replay prevention with 24-hour expiry
@@ -79,8 +81,9 @@ impl MeshManager {
         ));
 
         // Get or generate node ID
-        // Try to load from storage first, otherwise generate and store it
-        let node_id = Self::get_or_generate_node_id(node_api.as_ref()).await;
+        // Try to load from module DB first, otherwise generate and store it
+        let data_dir = std::path::Path::new(&ctx.data_dir);
+        let node_id = Self::get_or_generate_node_id(node_api.as_ref(), data_dir).await;
 
         debug!(
             "Initializing mesh manager: enabled={}, mode={:?}, node_id={:x?}",
@@ -108,8 +111,9 @@ impl MeshManager {
             return crate::routing_policy::RoutingPolicy::Free;
         }
 
-        let protocol = self.routing_policy.detect_protocol(message);
-        self.routing_policy.determine_policy(protocol)
+        let policy = self.routing_policy.read().unwrap();
+        let protocol = policy.detect_protocol(message);
+        policy.determine_policy(protocol)
     }
 
     /// Start the mesh manager
@@ -117,7 +121,7 @@ impl MeshManager {
         debug!(
             "Starting mesh manager (enabled={}, mode={:?})",
             self.enabled,
-            self.routing_policy.mode()
+            self.routing_policy.read().unwrap().mode()
         );
 
         if !self.enabled {
@@ -243,8 +247,8 @@ impl MeshManager {
             ));
         }
 
-        // Get my node ID from storage
-        let my_node_id = Self::get_or_generate_node_id(self.node_api.as_ref()).await;
+        // Use cached node ID (computed at init)
+        let my_node_id = self.node_id;
 
         // Find route to destination
         let mut route = self.routing_table.find_route(&packet.destination);
@@ -550,6 +554,41 @@ impl MeshManager {
         Ok(())
     }
 
+    /// List routing table entries
+    pub fn list_routes(&self) -> Vec<(NodeId, bool, usize, u64)> {
+        self.routing_table.list_routes()
+    }
+
+    /// List direct peers (node_id, address)
+    pub fn list_direct_peers(&self) -> Vec<(NodeId, String)> {
+        self.routing_table.list_direct_peers()
+    }
+
+    /// Add a direct peer by address (node_id derived from address)
+    pub fn add_peer(&self, addr: &str) -> Result<(), MeshError> {
+        let node_id = Self::derive_node_id_from_address(addr);
+        let address_bytes = addr.as_bytes().to_vec();
+        self.routing_table.add_direct_peer(node_id, address_bytes);
+        info!("Added peer via CLI: addr={}, node_id={:x?}", addr, &node_id[..8]);
+        Ok(())
+    }
+
+    /// Remove a direct peer by address (node_id derived from address)
+    pub fn remove_peer(&self, addr: &str) -> Result<(), MeshError> {
+        let node_id = Self::derive_node_id_from_address(addr);
+        self.routing_table.remove_direct_peer(&node_id);
+        info!("Removed peer via CLI: addr={}, node_id={:x?}", addr, &node_id[..8]);
+        Ok(())
+    }
+
+    /// Set mesh operating mode at runtime
+    pub fn set_mode(&self, mode: MeshMode) -> Result<(), MeshError> {
+        let mut policy = self.routing_policy.write().unwrap();
+        policy.set_mode(mode);
+        info!("Mesh mode set to {:?}", mode);
+        Ok(())
+    }
+
     /// Get routing statistics
     pub async fn get_stats(&self) -> MeshStats {
         let routing_stats = self.routing_table.stats();
@@ -557,7 +596,7 @@ impl MeshManager {
 
         MeshStats {
             enabled: self.enabled,
-            mode: self.routing_policy.mode(),
+            mode: self.routing_policy.read().unwrap().mode(),
             routing: routing_stats,
             replay: replay_stats,
         }
@@ -577,21 +616,24 @@ impl MeshManager {
     }
 
     /// Get or generate node ID
-    /// Tries to load from storage first, otherwise generates and stores a new one
-    async fn get_or_generate_node_id(node_api: &dyn NodeAPI) -> NodeId {
+    /// Tries to load from module DB first, otherwise generates and stores a new one
+    async fn get_or_generate_node_id(
+        node_api: &dyn NodeAPI,
+        data_dir: &std::path::Path,
+    ) -> NodeId {
         use sha2::{Digest, Sha256};
 
-        // Try to load from storage
-        let storage_key = b"node_id";
-        if let Ok(tree_id) = node_api.storage_open_tree("mesh_config".to_string()).await {
-            if let Ok(Some(stored_id)) = node_api
-                .storage_get(tree_id.clone(), storage_key.to_vec())
-                .await
-            {
-                if stored_id.len() == 32 {
-                    let mut node_id = [0u8; 32];
-                    node_id.copy_from_slice(&stored_id);
-                    return node_id;
+        const STORAGE_KEY: &[u8] = b"mesh_config:node_id";
+
+        // Try to load from module DB
+        if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir) {
+            if let Ok(tree) = db.tree(MESH_STATE_TREE) {
+                if let Ok(Some(stored_id)) = tree.get(STORAGE_KEY) {
+                    if stored_id.len() == 32 {
+                        let mut node_id = [0u8; 32];
+                        node_id.copy_from_slice(&stored_id);
+                        return node_id;
+                    }
                 }
             }
         }
@@ -643,10 +685,10 @@ impl MeshManager {
         };
 
         // Store for future use
-        if let Ok(tree_id) = node_api.storage_open_tree("mesh_config".to_string()).await {
-            let _ = node_api
-                .storage_insert(tree_id, storage_key.to_vec(), node_id.to_vec())
-                .await;
+        if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir) {
+            if let Ok(tree) = db.tree(MESH_STATE_TREE) {
+                let _ = tree.insert(STORAGE_KEY, &node_id);
+            }
         }
 
         node_id

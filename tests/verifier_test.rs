@@ -3,6 +3,7 @@
 use blvm_mesh::payment_proof::{PaymentProof, VerificationResult};
 use blvm_mesh::verifier::PaymentVerifier;
 use blvm_node::module::traits::NodeAPI;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // Mock NodeAPI for testing
@@ -74,8 +75,9 @@ impl NodeAPI for MockNodeAPI {
     ) -> Result<blvm_node::module::traits::MempoolSize, blvm_node::module::traits::ModuleError>
     {
         Ok(blvm_node::module::traits::MempoolSize {
-            count: 0,
+            transaction_count: 0,
             size_bytes: 0,
+            total_fee_sats: 0,
         })
     }
     async fn get_network_stats(
@@ -83,7 +85,8 @@ impl NodeAPI for MockNodeAPI {
     ) -> Result<blvm_node::module::traits::NetworkStats, blvm_node::module::traits::ModuleError>
     {
         Ok(blvm_node::module::traits::NetworkStats {
-            connected_peers: 0,
+            peer_count: 0,
+            hash_rate: 0.0,
             bytes_sent: 0,
             bytes_received: 0,
         })
@@ -99,9 +102,11 @@ impl NodeAPI for MockNodeAPI {
     ) -> Result<blvm_node::module::traits::ChainInfo, blvm_node::module::traits::ModuleError>
     {
         Ok(blvm_node::module::traits::ChainInfo {
-            tip: [0u8; 32],
+            tip_hash: [0u8; 32],
             height: 100,
-            difficulty: 1.0,
+            difficulty: 1,
+            chain_work: 0,
+            is_synced: true,
         })
     }
     async fn get_block_by_height(
@@ -180,58 +185,21 @@ impl NodeAPI for MockNodeAPI {
         blvm_node::module::traits::ModuleError,
     > {
         Ok(blvm_node::module::ipc::protocol::FileMetadata {
+            path: String::new(),
             size: 0,
-            modified: 0,
-            is_dir: false,
+            is_file: false,
+            is_directory: false,
+            modified: None,
+            created: None,
         })
     }
-    async fn storage_open_tree(
+    async fn get_all_metrics(
         &self,
-        _: String,
-    ) -> Result<String, blvm_node::module::traits::ModuleError> {
-        Ok("test".to_string())
-    }
-    async fn storage_insert(
-        &self,
-        _: String,
-        _: Vec<u8>,
-        _: Vec<u8>,
-    ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Ok(())
-    }
-    async fn storage_get(
-        &self,
-        _: String,
-        _: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, blvm_node::module::traits::ModuleError> {
-        Ok(None)
-    }
-    async fn storage_remove(
-        &self,
-        _: String,
-        _: Vec<u8>,
-    ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Ok(())
-    }
-    async fn storage_contains_key(
-        &self,
-        _: String,
-        _: Vec<u8>,
-    ) -> Result<bool, blvm_node::module::traits::ModuleError> {
-        Ok(false)
-    }
-    async fn storage_iter(
-        &self,
-        _: String,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, blvm_node::module::traits::ModuleError> {
-        Ok(Vec::new())
-    }
-    async fn storage_transaction(
-        &self,
-        _: String,
-        _: Vec<blvm_node::module::ipc::protocol::StorageOperation>,
-    ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Ok(())
+    ) -> Result<
+        HashMap<String, Vec<blvm_node::module::metrics::manager::Metric>>,
+        blvm_node::module::traits::ModuleError,
+    > {
+        Ok(HashMap::new())
     }
     async fn register_rpc_endpoint(
         &self,
@@ -285,8 +253,9 @@ impl NodeAPI for MockNodeAPI {
     }
     async fn initialize_module(
         &self,
-        _: &str,
-        _: blvm_node::module::traits::ModuleManifest,
+        _: String,
+        _: std::path::PathBuf,
+        _: std::path::PathBuf,
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
@@ -314,7 +283,7 @@ impl NodeAPI for MockNodeAPI {
     async fn publish_event(
         &self,
         _: blvm_node::module::traits::EventType,
-        _: blvm_node::module::traits::EventPayload,
+        _: blvm_node::module::ipc::protocol::EventPayload,
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
@@ -328,8 +297,7 @@ impl NodeAPI for MockNodeAPI {
     }
     async fn register_module_api(
         &self,
-        _: Vec<String>,
-        _: u32,
+        _: Arc<dyn blvm_node::module::inter_module::api::ModuleAPI>,
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
@@ -381,18 +349,26 @@ impl NodeAPI for MockNodeAPI {
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
-    async fn get_node_public_key(
+    async fn get_block_template(
         &self,
-    ) -> Result<Option<Vec<u8>>, blvm_node::module::traits::ModuleError> {
-        Ok(None)
+        _: Vec<String>,
+        _: Option<Vec<u8>>,
+        _: Option<String>,
+    ) -> Result<blvm_protocol::mining::BlockTemplate, blvm_node::module::traits::ModuleError> {
+        Err(blvm_node::module::traits::ModuleError::Other(
+            "not implemented".into(),
+        ))
     }
-    async fn get_event_publisher(
+    async fn submit_block(
         &self,
+        _: blvm_protocol::Block,
     ) -> Result<
-        Option<Arc<blvm_node::node::event_publisher::EventPublisher>>,
+        blvm_node::module::traits::SubmitBlockResult,
         blvm_node::module::traits::ModuleError,
     > {
-        Ok(None)
+        Err(blvm_node::module::traits::ModuleError::Other(
+            "not implemented".into(),
+        ))
     }
 }
 

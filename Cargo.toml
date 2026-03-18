@@ -65,6 +65,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 async-trait.workspace = true
 blvm-node.workspace = true
+blvm-sdk = { path = "../blvm-sdk", default-features = false, features = ["node"] }
+blvm-sdk-macros = { path = "../blvm-sdk/crates/blvm-sdk-macros" }
+toml = "0.8"
 
 # Mesh-specific dependencies
 secp256k1 = { version = "0.28", features = ["rand"] }
@@ -85,6 +88,11 @@ blvm-protocol = { path = "../blvm-protocol" }
 blvm-node = { path = "../blvm-node" }
 blvm-protocol = { path = "../blvm-protocol" }
 blvm-consensus = { path = "../blvm-consensus" }
+
+[features]
+default = []
+# CTV (CheckTemplateVerify) payment proofs for mesh routing
+ctv = ["blvm-protocol/ctv"]
 
 [dev-dependencies]
 # Testing

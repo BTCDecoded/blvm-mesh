@@ -56,6 +56,13 @@ impl MeshClient {
             )
             .await?;
 
+        if response.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(ModuleError::OperationError(format!(
+                "Response too large: {} bytes (max: {} bytes)",
+                response.len(),
+                crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+            )));
+        }
         let result: SendPacketResponse = bincode::deserialize(&response)
             .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
 
@@ -87,6 +94,13 @@ impl MeshClient {
             )
             .await?;
 
+        if response.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(ModuleError::OperationError(format!(
+                "Response too large: {} bytes (max: {} bytes)",
+                response.len(),
+                crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+            )));
+        }
         let result: DiscoverRouteResponse = bincode::deserialize(&response)
             .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
 
@@ -132,6 +146,13 @@ impl MeshClient {
             )
             .await?;
 
+        if response.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(ModuleError::OperationError(format!(
+                "Response too large: {} bytes (max: {} bytes)",
+                response.len(),
+                crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+            )));
+        }
         let node_id: NodeId = bincode::deserialize(&response)
             .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
 

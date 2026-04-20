@@ -29,8 +29,20 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 blvm-node = ">=0.1, <1"
+blvm-sdk = { version = ">=0.1, <1", default-features = false, features = ["node"] }
+blvm-sdk-macros = ">=0.1, <1"
+blvm-protocol = ">=0.1, <1"
+blvm-consensus = ">=0.1, <1"
 clap = { version = "4.0", features = ["derive"] }
 sha2 = "0.10"
+
+# Local monorepo: sibling paths override workspace dependency versions for all workspace members.
+[patch.crates-io]
+blvm-node = { path = "../blvm-node" }
+blvm-protocol = { path = "../blvm-protocol" }
+blvm-consensus = { path = "../blvm-consensus" }
+blvm-sdk = { path = "../blvm-sdk" }
+blvm-sdk-macros = { path = "../blvm-sdk/crates/blvm-sdk-macros" }
 
 [package]
 name = "blvm-mesh"
@@ -65,8 +77,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 async-trait.workspace = true
 blvm-node.workspace = true
-blvm-sdk = { path = "../blvm-sdk", default-features = false, features = ["node"] }
-blvm-sdk-macros = { path = "../blvm-sdk/crates/blvm-sdk-macros" }
+blvm-sdk.workspace = true
+blvm-sdk-macros.workspace = true
 toml = "0.8"
 
 # Mesh-specific dependencies
@@ -80,14 +92,7 @@ lru = "0.12"
 reqwest = { version = "0.12", features = ["json"] }
 clap = { version = "4.0", features = ["derive"] }
 futures = "0.3"
-blvm-protocol = { path = "../blvm-protocol" }
-
-# Local development: Use [patch.crates-io] to override with local paths
-# For production/CI, these patches are removed and crates.io versions are used
-[patch.crates-io]
-blvm-node = { path = "../blvm-node" }
-blvm-protocol = { path = "../blvm-protocol" }
-blvm-consensus = { path = "../blvm-consensus" }
+blvm-protocol.workspace = true
 
 [features]
 default = []

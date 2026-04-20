@@ -206,11 +206,7 @@ impl RoutingPolicyEngine {
 
     /// Check if command is a Commons governance command
     fn is_governance_command(&self, command: &str) -> bool {
-        // Commons governance messages
-        matches!(
-            command,
-            "econreg" | "econveto" | "econstat" | "econfork" | "getbanlist" | "banlist"
-        )
+        matches!(command, "getbanlist" | "banlist")
     }
 
     /// Check if message is Stratum V2 protocol

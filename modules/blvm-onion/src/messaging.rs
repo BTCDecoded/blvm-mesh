@@ -42,6 +42,10 @@ impl OnionMessaging {
         })
     }
 
+    pub fn local_node_id(&self) -> NodeId {
+        self.node_id
+    }
+
     /// Create a circuit to destination (route is built and stored)
     pub async fn create_circuit(
         &self,

@@ -39,6 +39,7 @@ sha2 = "0.10"
 # Local monorepo: sibling paths override workspace dependency versions for all workspace members.
 [patch.crates-io]
 blvm-node = { path = "../blvm-node" }
+blvm-secp256k1 = { path = "../blvm-secp256k1" }
 blvm-protocol = { path = "../blvm-protocol" }
 blvm-consensus = { path = "../blvm-consensus" }
 blvm-sdk = { path = "../blvm-sdk" }

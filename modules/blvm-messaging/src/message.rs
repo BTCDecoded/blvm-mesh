@@ -47,6 +47,10 @@ impl MessagingService {
         })
     }
 
+    pub fn local_node_id(&self) -> NodeId {
+        self.node_id
+    }
+
     /// Send a direct message
     ///
     /// This encrypts the message end-to-end and sends via mesh with payment.

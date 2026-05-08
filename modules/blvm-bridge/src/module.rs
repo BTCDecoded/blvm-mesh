@@ -1,8 +1,11 @@
 //! Bridge module: unified CLI via #[module] macro.
 
+use blvm_node::module::ipc::protocol::EventMessage;
+use blvm_node::module::traits::EventType;
 use blvm_sdk::module::prelude::*;
 use blvm_sdk_macros::module;
 use std::sync::Arc;
+use tracing::info;
 
 use crate::bridge::BridgeService;
 
@@ -10,15 +13,34 @@ use crate::bridge::BridgeService;
 pub struct BridgeModule {
     pub bridge_service: Arc<BridgeService>,
     pub bridge_mode: String,
+    /// Display copy of `BRIDGE_EDGE_TRANSPORT` (see `blvm_mesh::edge_transport`).
+    pub edge_transport: String,
 }
 
 #[module]
 impl BridgeModule {
+    #[on_event(PeerConnected, PeerDisconnected, NewBlock, MempoolTransactionAdded)]
+    async fn on_bridge_event(
+        &self,
+        event: &EventMessage,
+        ctx: &InvocationContext,
+    ) -> Result<(), ModuleError> {
+        let _ = ctx;
+        match event.event_type {
+            EventType::PeerConnected => info!("Peer connected (bridge)"),
+            EventType::PeerDisconnected => info!("Peer disconnected (bridge)"),
+            EventType::NewBlock => info!("New block — bridge may relay"),
+            EventType::MempoolTransactionAdded => {}
+            _ => {}
+        }
+        Ok(())
+    }
+
     #[command]
     fn status(&self, _ctx: &InvocationContext) -> Result<String, ModuleError> {
         Ok(format!(
-            "blvm-bridge module\nMode: {}\nRunning: true",
-            self.bridge_mode
+            "blvm-bridge module\nMode: {}\nEdge transport: {}\nRunning: true",
+            self.bridge_mode, self.edge_transport
         ))
     }
 
@@ -31,15 +53,16 @@ impl BridgeModule {
                 .iter()
                 .map(|b| {
                     format!(
-                        "  {}... type={:?} bandwidth={} bps last_seen={}",
+                        "  {}... type={:?} edge={:?} bandwidth={} bps last_seen={}",
                         hex::encode(&b.node_id[..8]),
                         b.connection_type,
+                        b.edge_transport,
                         b.bandwidth_bps,
                         b.last_seen
                     )
                 })
                 .collect();
-            Ok(format!(
+            Ok::<_, String>(format!(
                 "Connected bridges ({}):\n{}",
                 bridges.len(),
                 if lines.is_empty() { "  (none)".into() } else { lines.join("\n") },
@@ -63,8 +86,8 @@ impl BridgeModule {
         let bandwidth = bandwidth.unwrap_or(0);
         let service = Arc::clone(&self.bridge_service);
         run_async(async move {
-            service.add_bridge(node_id_hex, &conn_type, bandwidth).await.map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(format!("Added bridge: {}...", &node_id_hex[..16]))
+            service.add_bridge(node_id_hex, &conn_type, bandwidth).await?;
+            Ok::<_, String>(format!("Added bridge: {}...", &node_id_hex[..16]))
         })
     }
 }

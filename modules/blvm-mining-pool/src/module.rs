@@ -1,8 +1,11 @@
 //! Mining-pool module: unified CLI via #[module] macro.
 
+use blvm_node::module::ipc::protocol::EventMessage;
+use blvm_node::module::traits::EventType;
 use blvm_sdk::module::prelude::*;
 use blvm_sdk_macros::module;
 use std::sync::Arc;
+use tracing::info;
 
 use crate::pool::PoolCoordinator;
 
@@ -13,6 +16,25 @@ pub struct MiningPoolModule {
 
 #[module]
 impl MiningPoolModule {
+    #[on_event(PeerConnected, PeerDisconnected, NewBlock, MempoolTransactionAdded)]
+    async fn on_pool_event(
+        &self,
+        event: &EventMessage,
+        ctx: &InvocationContext,
+    ) -> Result<(), ModuleError> {
+        let _ = ctx;
+        match event.event_type {
+            EventType::PeerConnected => info!("Peer connected (mining-pool)"),
+            EventType::PeerDisconnected => info!("Peer disconnected (mining-pool)"),
+            EventType::NewBlock => info!("New block — pool may refresh block templates"),
+            EventType::MempoolTransactionAdded => {
+                info!("Mempool transaction added — templates may need update");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     #[command]
     fn status(&self, _ctx: &InvocationContext) -> Result<String, ModuleError> {
         Ok("blvm-mining-pool module\nProtocol: mining-pool-v1\nRunning: true".into())
@@ -24,7 +46,7 @@ impl MiningPoolModule {
         run_async(async move {
             let stats = coordinator.get_stats().await;
             let has_template = coordinator.get_template().await.is_some();
-            Ok(format!(
+            Ok::<_, String>(format!(
                 "Pool status:\n  Members: {}\n  Total hash rate: {} H/s\n  Template: {}",
                 stats.member_count,
                 stats.total_hash_rate,
@@ -48,7 +70,7 @@ impl MiningPoolModule {
                     m.last_seen
                 ));
             }
-            Ok(out)
+            Ok::<_, String>(out)
         })
     }
 }

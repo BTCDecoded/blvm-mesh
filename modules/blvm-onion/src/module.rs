@@ -3,6 +3,7 @@
 use blvm_sdk::module::prelude::*;
 use blvm_sdk_macros::module;
 use std::sync::Arc;
+use tracing::{debug, error, info};
 
 use crate::messaging::OnionMessaging;
 
@@ -13,6 +14,59 @@ pub struct OnionModule {
 
 #[module]
 impl OnionModule {
+    #[on_event(MeshPacketReceived)]
+    async fn on_mesh_packet(
+        &self,
+        packet_data: &[u8],
+        peer_addr: &str,
+        ctx: &InvocationContext,
+    ) -> Result<(), ModuleError> {
+        let _ = ctx;
+        if packet_data.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            debug!(
+                peer = %peer_addr,
+                bytes = packet_data.len(),
+                "dropping oversized mesh packet",
+            );
+            return Ok(());
+        }
+        let packet: blvm_mesh::MeshPacket = match bincode::deserialize(packet_data) {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        let Some(ref metadata) = packet.metadata else {
+            return Ok(());
+        };
+        if !metadata
+            .protocol
+            .as_ref()
+            .map(|s| s == "onion-v1")
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        let my_node_id = self.onion_messaging.local_node_id();
+        match self
+            .onion_messaging
+            .handle_incoming_packet(packet.payload, my_node_id)
+            .await
+        {
+            Ok(Some(decrypted_message)) => {
+                info!(
+                    "Onion message delivered: {} bytes",
+                    decrypted_message.len()
+                );
+            }
+            Ok(None) => {
+                debug!("Onion packet forwarded (intermediate node)");
+            }
+            Err(e) => {
+                error!("Failed to handle onion packet: {}", e);
+            }
+        }
+        Ok(())
+    }
+
     #[command]
     fn status(&self, _ctx: &InvocationContext) -> Result<String, ModuleError> {
         Ok("blvm-onion module\nProtocol: onion-v1\nRunning: true".into())
@@ -27,7 +81,7 @@ impl OnionModule {
                 .iter()
                 .map(|(id, route)| format!("  {}... hops={}", hex::encode(&id[..8]), route.len()))
                 .collect();
-            Ok(format!(
+            Ok::<_, String>(format!(
                 "Circuits ({}):\n{}",
                 lines.len(),
                 if lines.is_empty() { "  (none)".into() } else { lines.join("\n") },
@@ -49,8 +103,8 @@ impl OnionModule {
         arr.copy_from_slice(&bytes);
         let messaging = Arc::clone(&self.onion_messaging);
         run_async(async move {
-            let circuit_id = messaging.create_circuit(arr, vec![]).await.map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(format!("Circuit created: {}...", hex::encode(&circuit_id[..8])))
+            let circuit_id = messaging.create_circuit(arr, vec![]).await?;
+            Ok::<_, String>(format!("Circuit created: {}...", hex::encode(&circuit_id[..8])))
         })
     }
 }

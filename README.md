@@ -63,6 +63,19 @@ capabilities = [
 - RouteFailed
 - PaymentVerified (for mesh routing payments)
 
+## Mesh submodules (`modules/`)
+
+`blvm-messaging`, `blvm-onion`, `blvm-bridge`, and `blvm-mining-pool` use the same **`run_module!` + `#[module]`** pattern as the core `blvm-mesh` binary: `ModuleBootstrap::init_module`, `ModuleDb`, async `setup` (mesh `MeshClient`, protocol registration), and **`#[on_event(...)]`** for `MeshPacketReceived` / network events. Set **`MESH_MODULE_ID`** if the mesh module is not named `blvm-mesh`. **`BRIDGE_MODE`** (`satellite` \| `radio` \| `internet` \| custom) selects bridge kind for `blvm-bridge`.
+
+## External stacks (Meshtastic, Reticulum)
+
+See **[docs/edge-adapters.md](docs/edge-adapters.md)** for how to add **edge adapters** (and why there are no Meshtastic/Reticulum subcrates in-tree yet).
+
+BLVM mesh is **Bitcoin transport + payment policy** on top of the node’s P2P; it does not speak LoRa or Reticulum natively. To reach those networks, run a **small adapter** at the edge:
+
+- **Meshtastic:** Typical integration is **MQTT** (protobuf `MeshPacket` / `ServiceEnvelope` on broker topics) or **serial** from a gateway radio; see [Meshtastic MQTT](https://meshtastic.org/docs/software/integrations/mqtt/) and protobuf definitions in the Meshtastic project. Your adapter converts between those frames and BLVM mesh packets (or the bridge module’s relay path).
+- **Reticulum:** Use the **Python `RNS` API** (`Reticulum`, `Destination`, `Link`, `Resource`) with `rnsd` and interface config; see [Reticulum docs](https://reticulum.network/manual/). Bridge **application data** between an RNS destination and BLVM mesh **by design**—Reticulum is not a generic TCP/IP tunnel.
+
 ## License
 
 MIT License - see LICENSE file for details.

@@ -1,6 +1,6 @@
 //! Unit tests for payment verifier
 
-use blvm_mesh::payment_proof::{PaymentProof, VerificationResult};
+use blvm_mesh::payment_proof::PaymentProof;
 use blvm_mesh::verifier::PaymentVerifier;
 use blvm_node::module::traits::NodeAPI;
 use std::collections::HashMap;
@@ -370,6 +370,7 @@ impl NodeAPI for MockNodeAPI {
             "not implemented".into(),
         ))
     }
+
     async fn merge_block_serve_denylist(
         &self,
         _: &[blvm_protocol::Hash],
@@ -383,33 +384,29 @@ impl NodeAPI for MockNodeAPI {
         blvm_node::module::traits::BlockServeDenylistSnapshot,
         blvm_node::module::traits::ModuleError,
     > {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(blvm_node::module::traits::BlockServeDenylistSnapshot {
+            total_count: 0,
+            truncated: false,
+            hashes: vec![],
+        })
     }
 
     async fn clear_block_serve_denylist(&self) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(())
     }
 
     async fn replace_block_serve_denylist(
         &self,
         _: &[blvm_protocol::Hash],
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(())
     }
 
     async fn merge_tx_serve_denylist(
         &self,
         _: &[blvm_protocol::Hash],
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(())
     }
 
     async fn get_tx_serve_denylist_snapshot(
@@ -418,32 +415,33 @@ impl NodeAPI for MockNodeAPI {
         blvm_node::module::traits::TxServeDenylistSnapshot,
         blvm_node::module::traits::ModuleError,
     > {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(blvm_node::module::traits::TxServeDenylistSnapshot {
+            total_count: 0,
+            truncated: false,
+            hashes: vec![],
+        })
     }
 
     async fn clear_tx_serve_denylist(&self) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(())
     }
 
     async fn replace_tx_serve_denylist(
         &self,
         _: &[blvm_protocol::Hash],
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(())
     }
 
     async fn get_sync_status(
         &self,
     ) -> Result<blvm_node::module::traits::SyncStatus, blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(blvm_node::module::traits::SyncStatus {
+            phase: "Synced".to_string(),
+            progress: 1.0,
+            is_synced: true,
+            error_message: None,
+        })
     }
 
     async fn ban_peer(
@@ -451,25 +449,21 @@ impl NodeAPI for MockNodeAPI {
         _: &str,
         _: Option<u64>,
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(())
     }
 
     async fn set_block_serve_maintenance_mode(
         &self,
         _: bool,
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
-        Err(blvm_node::module::traits::ModuleError::Other(
-            "not implemented".into(),
-        ))
+        Ok(())
     }
 }
 
 #[tokio::test]
 async fn test_payment_verifier_creation() {
     let node_api = Arc::new(MockNodeAPI);
-    let verifier = PaymentVerifier::new(node_api);
+    let _verifier = PaymentVerifier::new(node_api);
     // Verifier should be created successfully
     assert!(true); // Basic creation test
 }

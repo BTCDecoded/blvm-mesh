@@ -1,6 +1,6 @@
 //! Bridge service for various connectivity types
 
-use blvm_mesh::{MeshClient, NodeId, PaymentProof};
+use blvm_mesh::{EdgeTransportKind, MeshClient, NodeId, PaymentProof};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,7 +12,8 @@ use tracing::{debug, info, warn};
 pub enum BridgeMode {
     /// Satellite bridge (Blockstream Satellite, etc.)
     Satellite,
-    /// Radio bridge (ham radio, LoRa, etc.)
+    /// Radio bridge (ham radio, LoRa, Meshtastic, Reticulum packet paths, etc.).
+    /// Pair with [`EdgeTransportKind`] via env `BRIDGE_EDGE_TRANSPORT` or connection metadata.
     Radio,
     /// Internet bridge (VPN, tunnel, etc.)
     Internet,
@@ -48,6 +49,8 @@ pub struct BridgeService {
     mesh_client: MeshClient,
     caller_module_id: String,
     bridge_mode: BridgeMode,
+    /// Hint for adapters (Meshtastic LoRa vs MQTT vs Reticulum, etc.).
+    edge_transport: Option<EdgeTransportKind>,
     relay_queue: Arc<RwLock<Vec<BridgePacket>>>,
     connected_bridges: Arc<RwLock<HashMap<NodeId, BridgeConnection>>>,
 }
@@ -59,6 +62,8 @@ pub struct BridgeConnection {
     pub connection_type: BridgeMode,
     pub last_seen: u64,
     pub bandwidth_bps: u64, // Bytes per second
+    /// Set when the peer is reached through a Meshtastic / Reticulum / generic radio adapter.
+    pub edge_transport: Option<EdgeTransportKind>,
 }
 
 impl BridgeService {
@@ -67,11 +72,13 @@ impl BridgeService {
         mesh_client: MeshClient,
         caller_module_id: String,
         bridge_mode: BridgeMode,
+        edge_transport: Option<EdgeTransportKind>,
     ) -> Self {
         Self {
             mesh_client,
             caller_module_id,
             bridge_mode,
+            edge_transport,
             relay_queue: Arc::new(RwLock::new(Vec::new())),
             connected_bridges: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -80,9 +87,10 @@ impl BridgeService {
     /// Register a bridge connection
     pub async fn register_bridge(&self, connection: BridgeConnection) {
         info!(
-            "Registering bridge: {:x?}, mode: {:?}, bandwidth: {} bps",
+            "Registering bridge: {:x?}, mode: {:?}, edge: {:?}, bandwidth: {} bps",
             &connection.node_id[..8],
             connection.connection_type,
+            connection.edge_transport,
             connection.bandwidth_bps
         );
         let mut bridges = self.connected_bridges.write().await;
@@ -100,9 +108,10 @@ impl BridgeService {
         payment_proof: Option<PaymentProof>,
     ) -> Result<(), String> {
         info!(
-            "Relaying {} bytes via bridge (mode: {:?}) to {:x?}",
+            "Relaying {} bytes via bridge (mode: {:?}, edge: {:?}) to {:x?}",
             data.len(),
             &self.bridge_mode,
+            self.edge_transport,
             &destination[..8]
         );
 
@@ -216,6 +225,7 @@ impl BridgeService {
         
         BridgeStats {
             bridge_mode: self.bridge_mode.clone(),
+            edge_transport: self.edge_transport,
             connected_bridges: bridges.len(),
             queued_packets: queue.len(),
         }
@@ -256,6 +266,7 @@ impl BridgeService {
             connection_type: conn_type,
             last_seen: now,
             bandwidth_bps,
+            edge_transport: self.edge_transport,
         };
         self.register_bridge(connection).await;
         Ok(())
@@ -266,6 +277,7 @@ impl BridgeService {
 #[derive(Debug, Clone)]
 pub struct BridgeStats {
     pub bridge_mode: BridgeMode,
+    pub edge_transport: Option<EdgeTransportKind>,
     pub connected_bridges: usize,
     pub queued_packets: usize,
 }

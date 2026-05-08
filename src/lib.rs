@@ -5,6 +5,7 @@ pub mod client_api;
 pub mod module;
 pub mod config;
 pub mod discovery;
+pub mod edge_transport;
 pub mod storage;
 
 pub use config::MeshConfig;
@@ -24,6 +25,9 @@ pub use api::{
     RegisterProtocolRequest, RegisterProtocolResponse, SendPacketRequest, SendPacketResponse,
 };
 pub use client_api::MeshClient;
+pub use edge_transport::{
+    chunk_bytes, parse_edge_transport, EdgeTransportKind, MESHTASTIC_LORA_APP_PAYLOAD_PLANNING_MAX,
+};
 pub use manager::{MeshManager, MeshStats};
 pub use module::MeshModule;
 pub use packet::{MeshPacket, PacketType};

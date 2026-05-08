@@ -27,6 +27,20 @@ impl MeshClient {
         }
     }
 
+    /// Planning budget (bytes) for **one LoRa-side frame** when bridging Meshtastic-style radios.
+    /// Larger payloads should be split before wrapping in mesh/bridge envelopes; see
+    /// [`crate::edge_transport`](edge_transport).
+    #[inline]
+    pub fn meshtastic_lora_payload_budget_bytes() -> usize {
+        crate::edge_transport::MESHTASTIC_LORA_APP_PAYLOAD_PLANNING_MAX
+    }
+
+    /// Split `data` into chunks suitable for [`Self::meshtastic_lora_payload_budget_bytes`].
+    #[inline]
+    pub fn chunk_for_meshtastic_lora<'a>(data: &'a [u8]) -> impl Iterator<Item = &'a [u8]> + 'a {
+        crate::edge_transport::chunk_bytes(data, Self::meshtastic_lora_payload_budget_bytes())
+    }
+
     /// Send a packet through the mesh
     pub async fn send_packet(
         &self,

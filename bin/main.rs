@@ -36,8 +36,11 @@ async fn main() -> Result<()> {
                 return Err(blvm_node::module::traits::ModuleError::Other(format!("Mesh manager startup failed: {}", e)));
             }
             let manager = Arc::new(manager);
-            let _mesh_api = Arc::new(MeshModuleAPI::new(Arc::clone(&manager)));
-            tracing::info!("Mesh module initialized - MeshModuleAPI fully implemented with all methods ready");
+            let mesh_api = Arc::new(MeshModuleAPI::new(Arc::clone(&manager)));
+            if let Err(e) = node_api.register_module_api(mesh_api).await {
+                error!("Failed to register mesh module API: {}", e);
+            }
+            tracing::info!("Mesh module initialized and API registered");
             let module = MeshModule {
                 manager: Arc::clone(&manager),
                 data_dir,

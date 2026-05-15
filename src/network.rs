@@ -4,7 +4,7 @@
 //! for sending and receiving mesh packets.
 
 use crate::error::MeshError;
-use crate::packet::{MeshPacket, MESH_PACKET_MAGIC, MAX_BINCODE_PAYLOAD_SIZE};
+use crate::packet::{MeshPacket, MAX_BINCODE_PAYLOAD_SIZE, MESH_PACKET_MAGIC};
 use bincode;
 use tracing::{debug, warn};
 
@@ -86,7 +86,12 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize() {
-        let packet = MeshPacket::new(PacketType::BitcoinP2P, [1u8; 32], [2u8; 32], vec![1, 2, 3, 4]);
+        let packet = MeshPacket::new(
+            PacketType::BitcoinP2P,
+            [1u8; 32],
+            [2u8; 32],
+            vec![1, 2, 3, 4],
+        );
 
         let serialized = serialize_mesh_packet(&packet).unwrap();
         assert!(is_mesh_packet(&serialized));

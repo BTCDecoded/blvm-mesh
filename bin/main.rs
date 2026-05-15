@@ -30,10 +30,18 @@ async fn main() -> Result<()> {
             let (ctx, _config) = bootstrap.context_with_config::<MeshConfig>(&data_dir);
             let manager = MeshManager::new(&ctx, Arc::clone(&node_api))
                 .await
-                .map_err(|e| blvm_node::module::traits::ModuleError::Other(format!("Failed to create mesh manager: {}", e)))?;
+                .map_err(|e| {
+                    blvm_node::module::traits::ModuleError::Other(format!(
+                        "Failed to create mesh manager: {}",
+                        e
+                    ))
+                })?;
             if let Err(e) = manager.start().await {
                 error!("Failed to start mesh manager: {}", e);
-                return Err(blvm_node::module::traits::ModuleError::Other(format!("Mesh manager startup failed: {}", e)));
+                return Err(blvm_node::module::traits::ModuleError::Other(format!(
+                    "Mesh manager startup failed: {}",
+                    e
+                )));
             }
             let manager = Arc::new(manager);
             let mesh_api = Arc::new(MeshModuleAPI::new(Arc::clone(&manager)));

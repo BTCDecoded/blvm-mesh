@@ -9,7 +9,7 @@ capabilities = [
     "subscribe_events",
 ]
 
-# CI fills url/sha256 on release — root binary `blvm-mesh` only.
+# CI fills url/sha256 on release — root `blvm-mesh` binary; see `modules/*/module.toml` for workspace members.
 [downloads]
 x86_64-linux   = { url = "", sha256 = "" }
 aarch64-linux  = { url = "", sha256 = "" }

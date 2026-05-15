@@ -3,8 +3,8 @@
 //! Provides a convenient API for submodules to call blvm-mesh ModuleAPI via IPC.
 
 use crate::api::{
-    DiscoverRouteRequest, DiscoverRouteResponse, RegisterProtocolRequest,
-    RegisterProtocolResponse, SendPacketRequest, SendPacketResponse,
+    DiscoverRouteRequest, DiscoverRouteResponse, RegisterProtocolRequest, RegisterProtocolResponse,
+    SendPacketRequest, SendPacketResponse,
 };
 use crate::payment_proof::PaymentProof;
 use crate::routing::NodeId;
@@ -63,11 +63,7 @@ impl MeshClient {
 
         let response = self
             .node_api
-            .call_module(
-                Some(&self.mesh_module_id),
-                "send_packet",
-                params,
-            )
+            .call_module(Some(&self.mesh_module_id), "send_packet", params)
             .await?;
 
         if response.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
@@ -101,11 +97,7 @@ impl MeshClient {
 
         let response = self
             .node_api
-            .call_module(
-                Some(&self.mesh_module_id),
-                "discover_route",
-                params,
-            )
+            .call_module(Some(&self.mesh_module_id), "discover_route", params)
             .await?;
 
         if response.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
@@ -153,11 +145,7 @@ impl MeshClient {
 
         let response = self
             .node_api
-            .call_module(
-                Some(&self.mesh_module_id),
-                "get_node_id",
-                params,
-            )
+            .call_module(Some(&self.mesh_module_id), "get_node_id", params)
             .await?;
 
         if response.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
@@ -173,4 +161,3 @@ impl MeshClient {
         Ok(node_id)
     }
 }
-

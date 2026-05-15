@@ -65,7 +65,11 @@ impl BridgeModule {
             Ok::<_, String>(format!(
                 "Connected bridges ({}):\n{}",
                 bridges.len(),
-                if lines.is_empty() { "  (none)".into() } else { lines.join("\n") },
+                if lines.is_empty() {
+                    "  (none)".into()
+                } else {
+                    lines.join("\n")
+                },
             ))
         })
     }
@@ -80,13 +84,17 @@ impl BridgeModule {
     ) -> Result<String, ModuleError> {
         let node_id_hex = node_id_hex.trim();
         if node_id_hex.is_empty() || node_id_hex.len() != 64 {
-            return Err(ModuleError::Other("Usage: add-bridge <node_id_hex_64chars> [type] [bandwidth]".into()));
+            return Err(ModuleError::Other(
+                "Usage: add-bridge <node_id_hex_64chars> [type] [bandwidth]".into(),
+            ));
         }
         let conn_type = connection_type.as_deref().unwrap_or("internet").to_string();
         let bandwidth = bandwidth.unwrap_or(0);
         let service = Arc::clone(&self.bridge_service);
         run_async(async move {
-            service.add_bridge(node_id_hex, &conn_type, bandwidth).await?;
+            service
+                .add_bridge(node_id_hex, &conn_type, bandwidth)
+                .await?;
             Ok::<_, String>(format!("Added bridge: {}...", &node_id_hex[..16]))
         })
     }

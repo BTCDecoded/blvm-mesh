@@ -221,7 +221,8 @@ impl RoutingTable {
             .iter()
             .map(|r| {
                 let node_id = *r.key();
-                let addr = String::from_utf8(r.value().clone()).unwrap_or_else(|_| "<invalid>".to_string());
+                let addr = String::from_utf8(r.value().clone())
+                    .unwrap_or_else(|_| "<invalid>".to_string());
                 (node_id, addr)
             })
             .collect()
@@ -236,7 +237,12 @@ impl RoutingTable {
             .map(|r| {
                 let entry = r.value();
                 let is_direct = entry.direct_address.is_some() && entry.next_hop.is_none();
-                (entry.node_id, is_direct, entry.route_path.len(), entry.route_cost)
+                (
+                    entry.node_id,
+                    is_direct,
+                    entry.route_path.len(),
+                    entry.route_cost,
+                )
             })
             .collect()
     }

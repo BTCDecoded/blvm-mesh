@@ -6,13 +6,13 @@ use crate::manager::MeshManager;
 use crate::packet::MeshPacket;
 use crate::payment_proof::PaymentProof;
 use crate::routing::NodeId;
+use async_trait::async_trait;
 use blvm_node::module::inter_module::api::ModuleAPI;
 use blvm_node::module::traits::ModuleError;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tracing::{debug, error, info};
-use sha2::{Digest, Sha256};
 
 /// Request to send a packet through the mesh
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +54,7 @@ pub struct DiscoverRouteResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterProtocolRequest {
     pub protocol_id: String,
-    pub handler_method: String,  // Method name in calling module
+    pub handler_method: String, // Method name in calling module
 }
 
 /// Response from protocol registration
@@ -107,8 +107,11 @@ impl ModuleAPI for MeshModuleAPI {
         params: &[u8],
         caller_module_id: &str,
     ) -> Result<Vec<u8>, ModuleError> {
-        debug!("Mesh API call: {}::{} from {}", method, caller_module_id, caller_module_id);
-        
+        debug!(
+            "Mesh API call: {}::{} from {}",
+            method, caller_module_id, caller_module_id
+        );
+
         match method {
             "send_packet" => {
                 if params.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
@@ -120,10 +123,10 @@ impl ModuleAPI for MeshModuleAPI {
                 }
                 let req: SendPacketRequest = bincode::deserialize(params)
                     .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
-                
+
                 // Get node ID from manager
                 let node_id = self.get_node_id();
-                
+
                 // Create mesh packet
                 let mut packet = if let Some(ref proof) = req.payment_proof {
                     MeshPacket::new_paid(
@@ -140,7 +143,7 @@ impl ModuleAPI for MeshModuleAPI {
                         req.payload,
                     )
                 };
-                
+
                 // Set protocol metadata if provided
                 if let Some(protocol_id) = req.protocol_id {
                     packet.metadata = Some(crate::packet::PacketMetadata {
@@ -148,7 +151,7 @@ impl ModuleAPI for MeshModuleAPI {
                         fields: std::collections::HashMap::new(),
                     });
                 }
-                
+
                 // Route the packet
                 match self.manager.route_packet(&packet).await {
                     Ok(_) => {
@@ -157,7 +160,9 @@ impl ModuleAPI for MeshModuleAPI {
                             success: true,
                             packet_id,
                             route_length: packet.route.len(),
-                            estimated_cost_sats: req.payment_proof.as_ref()
+                            estimated_cost_sats: req
+                                .payment_proof
+                                .as_ref()
                                 .map(|p| p.amount_sats())
                                 .unwrap_or(0),
                             error: None,
@@ -176,7 +181,7 @@ impl ModuleAPI for MeshModuleAPI {
                     }
                 }
             }
-            
+
             "discover_route" => {
                 if params.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
                     return Err(ModuleError::OperationError(format!(
@@ -187,27 +192,31 @@ impl ModuleAPI for MeshModuleAPI {
                 }
                 let req: DiscoverRouteRequest = bincode::deserialize(params)
                     .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
-                
+
                 let start = std::time::Instant::now();
-                
-                let route = self.manager
+
+                let route = self
+                    .manager
                     .discover_route(req.destination)
                     .await
-                    .map_err(|e| ModuleError::OperationError(format!("Route discovery failed: {}", e)))?;
-                
+                    .map_err(|e| {
+                        ModuleError::OperationError(format!("Route discovery failed: {}", e))
+                    })?;
+
                 let discovery_time = start.elapsed().as_millis() as u64;
-                
+
                 let response = DiscoverRouteResponse {
                     route: route.clone(),
-                    route_cost_sats: route.as_ref()
+                    route_cost_sats: route
+                        .as_ref()
                         .map(|r| r.len() as u64 * 10) // 10 sats per hop estimate
                         .unwrap_or(0),
                     discovery_time_ms: discovery_time,
                 };
-                
+
                 Ok(bincode::serialize(&response)?)
             }
-            
+
             "register_protocol_handler" => {
                 if params.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
                     return Err(ModuleError::OperationError(format!(
@@ -218,29 +227,30 @@ impl ModuleAPI for MeshModuleAPI {
                 }
                 let req: RegisterProtocolRequest = bincode::deserialize(params)
                     .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
-                
+
                 let mut handlers = self.protocol_handlers.write().await;
                 handlers.insert(
                     req.protocol_id.clone(),
                     format!("{}::{}", caller_module_id, req.handler_method),
                 );
-                
+
                 info!(
                     "Registered protocol handler: {} -> {}::{}",
                     req.protocol_id, caller_module_id, req.handler_method
                 );
-                
+
                 let response = RegisterProtocolResponse { success: true };
                 Ok(bincode::serialize(&response)?)
             }
-            
+
             "get_routing_stats" => {
                 let stats = self.manager.get_stats().await;
                 Ok(bincode::serialize(&stats)?)
             }
-            
+
             "get_peer_list" => {
-                let peers: Vec<PeerEntry> = self.manager
+                let peers: Vec<PeerEntry> = self
+                    .manager
                     .list_direct_peers()
                     .into_iter()
                     .map(|(node_id, addr)| PeerEntry {
@@ -250,26 +260,29 @@ impl ModuleAPI for MeshModuleAPI {
                     .collect();
                 Ok(bincode::serialize(&peers)?)
             }
-            
+
             "get_route_stats" => {
                 let stats = self.manager.get_stats().await;
                 Ok(bincode::serialize(&stats.routing)?)
             }
-            
+
             "get_network_stats" => {
                 let stats = self.manager.get_stats().await;
                 Ok(bincode::serialize(&stats)?)
             }
-            
+
             "get_node_id" => {
                 let node_id = self.manager.node_id();
                 Ok(bincode::serialize(&node_id)?)
             }
-            
-            _ => Err(ModuleError::OperationError(format!("Unknown method: {}", method)))
+
+            _ => Err(ModuleError::OperationError(format!(
+                "Unknown method: {}",
+                method
+            ))),
         }
     }
-    
+
     fn list_methods(&self) -> Vec<String> {
         vec![
             "send_packet".to_string(),
@@ -282,9 +295,8 @@ impl ModuleAPI for MeshModuleAPI {
             "get_node_id".to_string(),
         ]
     }
-    
+
     fn api_version(&self) -> u32 {
         1
     }
 }
-

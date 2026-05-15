@@ -2,10 +2,10 @@
 
 pub mod api;
 pub mod client_api;
-pub mod module;
 pub mod config;
 pub mod discovery;
 pub mod edge_transport;
+pub mod module;
 pub mod storage;
 
 pub use config::MeshConfig;
@@ -21,8 +21,8 @@ pub mod verifier;
 
 // Re-export commonly used types
 pub use api::{
-    DiscoverRouteRequest, DiscoverRouteResponse, MeshModuleAPI, PeerEntry,
-    RegisterProtocolRequest, RegisterProtocolResponse, SendPacketRequest, SendPacketResponse,
+    DiscoverRouteRequest, DiscoverRouteResponse, MeshModuleAPI, PeerEntry, RegisterProtocolRequest,
+    RegisterProtocolResponse, SendPacketRequest, SendPacketResponse,
 };
 pub use client_api::MeshClient;
 pub use edge_transport::{

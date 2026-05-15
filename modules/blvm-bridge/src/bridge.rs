@@ -116,7 +116,10 @@ impl BridgeService {
         );
 
         // Get source node ID from mesh
-        let source = self.mesh_client.get_node_id().await
+        let source = self
+            .mesh_client
+            .get_node_id()
+            .await
             .map_err(|e| format!("Failed to get node ID: {}", e))?;
 
         // Create bridge packet
@@ -156,8 +159,7 @@ impl BridgeService {
 
         info!(
             "Bridge relay successful: {} hops, cost: {} sats",
-            response.route_length,
-            response.estimated_cost_sats
+            response.route_length, response.estimated_cost_sats
         );
 
         Ok(())
@@ -169,7 +171,10 @@ impl BridgeService {
         packet_payload: Vec<u8>,
         my_node_id: NodeId,
     ) -> Result<Option<BridgePacket>, String> {
-        debug!("Handling incoming bridge packet: {} bytes", packet_payload.len());
+        debug!(
+            "Handling incoming bridge packet: {} bytes",
+            packet_payload.len()
+        );
 
         if packet_payload.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
             return Err(format!(
@@ -222,7 +227,7 @@ impl BridgeService {
     pub async fn get_stats(&self) -> BridgeStats {
         let bridges = self.connected_bridges.read().await;
         let queue = self.relay_queue.read().await;
-        
+
         BridgeStats {
             bridge_mode: self.bridge_mode.clone(),
             edge_transport: self.edge_transport,
@@ -244,8 +249,8 @@ impl BridgeService {
         connection_type: &str,
         bandwidth_bps: u64,
     ) -> Result<(), String> {
-        let node_id = hex::decode(node_id_hex)
-            .map_err(|e| format!("Invalid node_id hex: {}", e))?;
+        let node_id =
+            hex::decode(node_id_hex).map_err(|e| format!("Invalid node_id hex: {}", e))?;
         if node_id.len() != 32 {
             return Err("node_id must be 64 hex chars (32 bytes)".to_string());
         }
@@ -281,4 +286,3 @@ pub struct BridgeStats {
     pub connected_bridges: usize,
     pub queued_packets: usize,
 }
-

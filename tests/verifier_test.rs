@@ -99,8 +99,7 @@ impl NodeAPI for MockNodeAPI {
     }
     async fn get_chain_info(
         &self,
-    ) -> Result<blvm_node::module::traits::ChainInfo, blvm_node::module::traits::ModuleError>
-    {
+    ) -> Result<blvm_node::module::traits::ChainInfo, blvm_node::module::traits::ModuleError> {
         Ok(blvm_node::module::traits::ChainInfo {
             tip_hash: [0u8; 32],
             height: 100,
@@ -214,6 +213,19 @@ impl NodeAPI for MockNodeAPI {
     ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
+    async fn register_core_rpc_override(
+        &self,
+        _: String,
+        _: String,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
+        Ok(())
+    }
+    async fn unregister_core_rpc_override(
+        &self,
+        _: &str,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
+        Ok(())
+    }
     async fn register_timer(
         &self,
         _: u64,
@@ -268,10 +280,8 @@ impl NodeAPI for MockNodeAPI {
     async fn get_module_info(
         &self,
         _: &str,
-    ) -> Result<
-        Option<blvm_node::module::traits::ModuleInfo>,
-        blvm_node::module::traits::ModuleError,
-    > {
+    ) -> Result<Option<blvm_node::module::traits::ModuleInfo>, blvm_node::module::traits::ModuleError>
+    {
         Ok(None)
     }
     async fn is_module_available(
@@ -362,10 +372,8 @@ impl NodeAPI for MockNodeAPI {
     async fn submit_block(
         &self,
         _: blvm_protocol::Block,
-    ) -> Result<
-        blvm_node::module::traits::SubmitBlockResult,
-        blvm_node::module::traits::ModuleError,
-    > {
+    ) -> Result<blvm_node::module::traits::SubmitBlockResult, blvm_node::module::traits::ModuleError>
+    {
         Err(blvm_node::module::traits::ModuleError::Other(
             "not implemented".into(),
         ))
@@ -391,7 +399,9 @@ impl NodeAPI for MockNodeAPI {
         })
     }
 
-    async fn clear_block_serve_denylist(&self) -> Result<(), blvm_node::module::traits::ModuleError> {
+    async fn clear_block_serve_denylist(
+        &self,
+    ) -> Result<(), blvm_node::module::traits::ModuleError> {
         Ok(())
     }
 

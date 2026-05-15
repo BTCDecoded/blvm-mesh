@@ -105,7 +105,7 @@ impl PaymentVerifier {
         // Calculate SHA256 of preimage to get payment hash
         use sha2::{Digest, Sha256};
         let preimage_hash = Sha256::digest(preimage);
-        
+
         // Get payment hash from invoice
         // lightning-invoice 0.2: payment_hash() returns &Sha256 (which wraps sha256::Hash)
         // Convert hash to bytes via hex string (sha256::Hash Display outputs hex)
@@ -116,7 +116,7 @@ impl PaymentVerifier {
         })?;
         let mut invoice_hash_array = [0u8; 32];
         invoice_hash_array.copy_from_slice(&invoice_hash_bytes[..32]);
-        
+
         // Verify preimage hash matches invoice payment hash
         if preimage_hash.as_slice() != invoice_hash_array.as_slice() {
             warn!("Payment hash mismatch: preimage hash does not match invoice");

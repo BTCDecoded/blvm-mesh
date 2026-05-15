@@ -25,9 +25,9 @@ mod tests {
 
         let serialized = bincode::serialize(&PoolMessage::BlockTemplate(template.clone()))
             .expect("Serialization should succeed");
-        
-        let deserialized: PoolMessage = bincode::deserialize(&serialized)
-            .expect("Deserialization should succeed");
+
+        let deserialized: PoolMessage =
+            bincode::deserialize(&serialized).expect("Deserialization should succeed");
 
         match deserialized {
             PoolMessage::BlockTemplate(deser_template) => {
@@ -50,7 +50,10 @@ mod tests {
         let serialized = bincode::serialize(&join_msg).unwrap();
         let deserialized: PoolMessage = bincode::deserialize(&serialized).unwrap();
         match deserialized {
-            PoolMessage::MemberJoin { node_id: id, hash_rate } => {
+            PoolMessage::MemberJoin {
+                node_id: id,
+                hash_rate,
+            } => {
                 assert_eq!(id, node_id);
                 assert_eq!(hash_rate, 1000);
             }
@@ -67,4 +70,3 @@ mod tests {
         }
     }
 }
-

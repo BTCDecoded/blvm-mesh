@@ -569,7 +569,11 @@ impl MeshManager {
         let node_id = Self::derive_node_id_from_address(addr);
         let address_bytes = addr.as_bytes().to_vec();
         self.routing_table.add_direct_peer(node_id, address_bytes);
-        info!("Added peer via CLI: addr={}, node_id={:x?}", addr, &node_id[..8]);
+        info!(
+            "Added peer via CLI: addr={}, node_id={:x?}",
+            addr,
+            &node_id[..8]
+        );
         Ok(())
     }
 
@@ -577,7 +581,11 @@ impl MeshManager {
     pub fn remove_peer(&self, addr: &str) -> Result<(), MeshError> {
         let node_id = Self::derive_node_id_from_address(addr);
         self.routing_table.remove_direct_peer(&node_id);
-        info!("Removed peer via CLI: addr={}, node_id={:x?}", addr, &node_id[..8]);
+        info!(
+            "Removed peer via CLI: addr={}, node_id={:x?}",
+            addr,
+            &node_id[..8]
+        );
         Ok(())
     }
 
@@ -608,7 +616,10 @@ impl MeshManager {
     }
 
     /// Discover route to destination (exposed for API)
-    pub async fn discover_route(&self, destination: NodeId) -> Result<Option<Vec<NodeId>>, MeshError> {
+    pub async fn discover_route(
+        &self,
+        destination: NodeId,
+    ) -> Result<Option<Vec<NodeId>>, MeshError> {
         self.route_discovery
             .discover_route(destination, self.node_id)
             .await
@@ -617,10 +628,7 @@ impl MeshManager {
 
     /// Get or generate node ID
     /// Tries to load from module DB first, otherwise generates and stores a new one
-    async fn get_or_generate_node_id(
-        node_api: &dyn NodeAPI,
-        data_dir: &std::path::Path,
-    ) -> NodeId {
+    async fn get_or_generate_node_id(node_api: &dyn NodeAPI, data_dir: &std::path::Path) -> NodeId {
         use sha2::{Digest, Sha256};
 
         const STORAGE_KEY: &[u8] = b"mesh_config:node_id";

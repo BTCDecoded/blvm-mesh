@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod tests {
-    use blvm_mesh::NodeId;
     use blvm_bridge::bridge::{BridgePacket, BridgePacketType};
+    use blvm_mesh::NodeId;
 
     fn create_test_node_id(seed: u8) -> NodeId {
         let mut id = [0u8; 32];
@@ -24,11 +24,10 @@ mod tests {
             timestamp: 1234567890,
         };
 
-        let serialized = bincode::serialize(&packet)
-            .expect("Serialization should succeed");
-        
-        let deserialized: BridgePacket = bincode::deserialize(&serialized)
-            .expect("Deserialization should succeed");
+        let serialized = bincode::serialize(&packet).expect("Serialization should succeed");
+
+        let deserialized: BridgePacket =
+            bincode::deserialize(&serialized).expect("Deserialization should succeed");
 
         assert_eq!(deserialized.source, source);
         assert_eq!(deserialized.destination, dest);
@@ -59,7 +58,7 @@ mod tests {
 
             let serialized = bincode::serialize(&packet).unwrap();
             let deserialized: BridgePacket = bincode::deserialize(&serialized).unwrap();
-            
+
             match (packet_type, deserialized.packet_type) {
                 (BridgePacketType::Block, BridgePacketType::Block) => {}
                 (BridgePacketType::Transaction, BridgePacketType::Transaction) => {}
@@ -70,4 +69,3 @@ mod tests {
         }
     }
 }
-

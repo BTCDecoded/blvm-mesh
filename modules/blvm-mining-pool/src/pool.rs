@@ -38,7 +38,10 @@ pub enum PoolMessage {
     /// Member leave notification
     MemberLeave { node_id: NodeId },
     /// Share submission
-    ShareSubmit { node_id: NodeId, share_data: Vec<u8> },
+    ShareSubmit {
+        node_id: NodeId,
+        share_data: Vec<u8>,
+    },
 }
 
 /// Pool coordinator for managing pool members and block template distribution
@@ -91,11 +94,7 @@ impl PoolCoordinator {
     }
 
     /// Handle incoming pool message
-    pub async fn handle_message(
-        &self,
-        sender: NodeId,
-        message: PoolMessage,
-    ) -> Result<(), String> {
+    pub async fn handle_message(&self, sender: NodeId, message: PoolMessage) -> Result<(), String> {
         match message {
             PoolMessage::MemberJoin { node_id, hash_rate } => {
                 let member = PoolMember {
@@ -117,8 +116,15 @@ impl PoolCoordinator {
                 *current = Some(template);
                 info!("Block template updated");
             }
-            PoolMessage::ShareSubmit { node_id, share_data } => {
-                debug!("Share submitted from {:x?}: {} bytes", &node_id[..8], share_data.len());
+            PoolMessage::ShareSubmit {
+                node_id,
+                share_data,
+            } => {
+                debug!(
+                    "Share submitted from {:x?}: {} bytes",
+                    &node_id[..8],
+                    share_data.len()
+                );
                 // TODO: Validate and process share
             }
         }
@@ -179,10 +185,7 @@ impl PoolCoordinator {
     ///
     /// This uses mesh routing for guaranteed delivery to all members.
     /// Since this is internal pool coordination, payment is not required.
-    pub async fn broadcast_block_template(
-        &self,
-        template: BlockTemplate,
-    ) -> Result<usize, String> {
+    pub async fn broadcast_block_template(&self, template: BlockTemplate) -> Result<usize, String> {
         let serialized = bincode::serialize(&PoolMessage::BlockTemplate(template))
             .map_err(|e| format!("Failed to serialize template: {}", e))?;
         self.broadcast_to_members(serialized).await
@@ -198,7 +201,7 @@ impl PoolCoordinator {
     pub async fn get_stats(&self) -> PoolStats {
         let members = self.members.read().await;
         let total_hash_rate: u64 = members.values().map(|m| m.hash_rate).sum();
-        
+
         PoolStats {
             member_count: members.len(),
             total_hash_rate,
@@ -218,4 +221,3 @@ pub struct PoolStats {
     pub member_count: usize,
     pub total_hash_rate: u64,
 }
-

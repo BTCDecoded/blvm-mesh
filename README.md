@@ -76,6 +76,10 @@ BLVM mesh is **Bitcoin transport + payment policy** on top of the node’s P2P; 
 - **Meshtastic:** Typical integration is **MQTT** (protobuf `MeshPacket` / `ServiceEnvelope` on broker topics) or **serial** from a gateway radio; see [Meshtastic MQTT](https://meshtastic.org/docs/software/integrations/mqtt/) and protobuf definitions in the Meshtastic project. Your adapter converts between those frames and BLVM mesh packets (or the bridge module’s relay path).
 - **Reticulum:** Use the **Python `RNS` API** (`Reticulum`, `Destination`, `Link`, `Resource`) with `rnsd` and interface config; see [Reticulum docs](https://reticulum.network/manual/). Bridge **application data** between an RNS destination and BLVM mesh **by design**—Reticulum is not a generic TCP/IP tunnel.
 
+## Parity, registry, releases
+
+Each publishable binary has a **`module.toml`** (root + `modules/*`) with **`[downloads]`** keys aligned to the **zmq** release matrix (`x86_64-linux`, `aarch64-linux`, `x86_64-windows`). CI/release should fill `url` / `sha256` per artifact. Bootstrap policy: [Module registry](../../blvm/README.md#module-registry) in the **`blvm`** crate README.
+
 ## License
 
 MIT License - see LICENSE file for details.

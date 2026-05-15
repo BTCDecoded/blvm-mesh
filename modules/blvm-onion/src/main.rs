@@ -4,10 +4,8 @@
 
 use anyhow::Result;
 use blvm_mesh::MeshClient;
-use blvm_onion::{
-    OnionConfig, OnionEncryption, OnionMessaging, OnionModule, OnionRouteBuilder,
-};
 use blvm_node::module::traits::ModuleError;
+use blvm_onion::{OnionConfig, OnionEncryption, OnionMessaging, OnionModule, OnionRouteBuilder};
 use blvm_sdk::module::{ModuleBootstrap, ModuleDb};
 use std::path::Path;
 use std::sync::Arc;

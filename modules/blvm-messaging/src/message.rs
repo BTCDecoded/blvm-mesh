@@ -18,7 +18,7 @@ pub struct Message {
     pub from: NodeId,
     pub to: NodeId,
     pub timestamp: u64,
-    pub content: Vec<u8>, // Encrypted message content
+    pub content: Vec<u8>,     // Encrypted message content
     pub message_id: [u8; 32], // Unique message ID
 }
 
@@ -35,7 +35,9 @@ impl MessagingService {
     /// Create a new messaging service
     pub async fn new(mesh_client: MeshClient, caller_module_id: String) -> Result<Self, String> {
         // Get node ID from mesh
-        let node_id = mesh_client.get_node_id().await
+        let node_id = mesh_client
+            .get_node_id()
+            .await
             .map_err(|e| format!("Failed to get node ID: {}", e))?;
 
         Ok(Self {
@@ -110,9 +112,7 @@ impl MessagingService {
 
         info!(
             "Message sent: {} bytes, cost: {} sats, route: {} hops",
-            serialized_len,
-            response.estimated_cost_sats,
-            response.route_length
+            serialized_len, response.estimated_cost_sats, response.route_length
         );
 
         Ok(message_id)
@@ -267,11 +267,13 @@ impl MessagingService {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(content);
-        hasher.update(&std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_le_bytes());
+        hasher.update(
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .to_le_bytes(),
+        );
         let hash = hasher.finalize();
         let mut message_id = [0u8; 32];
         message_id.copy_from_slice(&hash);
@@ -323,6 +325,10 @@ mod tests {
         let key_ab = MessagingService::derive_shared_key(node_a, node_b);
         let key_ba = MessagingService::derive_shared_key(node_b, node_a);
 
-        assert_eq!(key_ab.as_slice(), key_ba.as_slice(), "Shared keys should be symmetric");
+        assert_eq!(
+            key_ab.as_slice(),
+            key_ba.as_slice(),
+            "Shared keys should be symmetric"
+        );
     }
 }

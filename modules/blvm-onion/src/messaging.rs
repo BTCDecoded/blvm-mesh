@@ -1,9 +1,9 @@
 //! Messaging functionality for blvm-onion
 
-use blvm_mesh::{MeshClient, NodeId};
 use crate::encryption::OnionEncryption;
 use crate::onion::OnionRouteBuilder;
 use blvm_mesh::PaymentProof;
+use blvm_mesh::{MeshClient, NodeId};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ pub struct OnionMessaging {
     route_builder: OnionRouteBuilder,
     encryption: OnionEncryption,
     caller_module_id: String,
-    node_id: NodeId, // Cache node ID
+    node_id: NodeId,                                       // Cache node ID
     circuits: Arc<RwLock<HashMap<[u8; 32], Vec<NodeId>>>>, // circuit_id -> route
 }
 
@@ -29,7 +29,9 @@ impl OnionMessaging {
         caller_module_id: String,
     ) -> Result<Self, String> {
         // Get node ID from mesh
-        let node_id = mesh_client.get_node_id().await
+        let node_id = mesh_client
+            .get_node_id()
+            .await
             .map_err(|e| format!("Failed to get node ID: {}", e))?;
 
         Ok(Self {
@@ -60,24 +62,33 @@ impl OnionMessaging {
         let mut hasher = Sha256::new();
         hasher.update(&route[0]);
         hasher.update(&route[route.len() - 1]);
-        hasher.update(&std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_le_bytes());
+        hasher.update(
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .to_le_bytes(),
+        );
         let hash = hasher.finalize();
         let mut circuit_id = [0u8; 32];
         circuit_id.copy_from_slice(&hash);
         let mut circuits = self.circuits.write().await;
         circuits.insert(circuit_id, route.clone());
-        info!("Created circuit {:x?} ({} hops)", &circuit_id[..8], route.len());
+        info!(
+            "Created circuit {:x?} ({} hops)",
+            &circuit_id[..8],
+            route.len()
+        );
         Ok(circuit_id)
     }
 
     /// List active circuits
     pub async fn list_circuits(&self) -> Vec<([u8; 32], Vec<NodeId>)> {
         let circuits = self.circuits.read().await;
-        circuits.iter().map(|(id, route)| (*id, route.clone())).collect()
+        circuits
+            .iter()
+            .map(|(id, route)| (*id, route.clone()))
+            .collect()
     }
 
     /// Send a message via onion routing
@@ -162,7 +173,10 @@ impl OnionMessaging {
         packet_payload: Vec<u8>,
         my_node_id: NodeId,
     ) -> Result<Option<Vec<u8>>, String> {
-        debug!("Handling incoming onion packet: {} bytes", packet_payload.len());
+        debug!(
+            "Handling incoming onion packet: {} bytes",
+            packet_payload.len()
+        );
 
         if packet_payload.len() > blvm_mesh::packet::MAX_BINCODE_PAYLOAD_SIZE {
             return Err(format!(
@@ -176,24 +190,26 @@ impl OnionMessaging {
             .map_err(|e| format!("Failed to deserialize onion message: {}", e))?;
 
         // Decrypt one layer
-        let (next_hop, inner_message) = self
-            .encryption
-            .decrypt_layer(&onion_message, my_node_id)?;
+        let (next_hop, inner_message) =
+            self.encryption.decrypt_layer(&onion_message, my_node_id)?;
 
         if let Some(next_hop_id) = next_hop {
             // We're an intermediate node - forward the inner message
-            debug!("Forwarding onion packet to next hop: {:x?}", &next_hop_id[..8]);
-            
+            debug!(
+                "Forwarding onion packet to next hop: {:x?}",
+                &next_hop_id[..8]
+            );
+
             // Create new OnionMessage with inner payload
             let inner_onion = crate::encryption::OnionMessage {
                 encrypted_payload: inner_message,
                 route_hint: None,
             };
-            
+
             // Serialize and forward
             let forward_payload = bincode::serialize(&inner_onion)
                 .map_err(|e| format!("Failed to serialize inner message: {}", e))?;
-            
+
             // Forward via mesh (no payment proof needed for forwarding)
             let _ = self
                 .mesh_client
@@ -206,14 +222,13 @@ impl OnionMessaging {
                 )
                 .await
                 .map_err(|e| format!("Failed to forward packet: {}", e))?;
-            
+
             // Return None to indicate we forwarded, not delivered
             return Ok(None);
         }
-        
+
         // We're the destination - return the decrypted message
         debug!("Onion message delivered to destination");
         Ok(Some(inner_message))
     }
 }
-

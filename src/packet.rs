@@ -86,7 +86,7 @@ impl MeshPacket {
             source,
             destination,
             route: vec![source, destination], // Route: source -> destination
-            sequence: 0,         // Will be set by sender
+            sequence: 0,                      // Will be set by sender
             timestamp: now,
             payment_proof: None,
             payload,

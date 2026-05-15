@@ -47,10 +47,7 @@ impl MeshConfig {
     /// Convert to ModuleContext config map for manager compatibility.
     pub fn to_context_map(&self) -> std::collections::HashMap<String, String> {
         let mut m = std::collections::HashMap::new();
-        m.insert(
-            "mesh.enabled".to_string(),
-            self.enabled.to_string(),
-        );
+        m.insert("mesh.enabled".to_string(), self.enabled.to_string());
         m.insert("mesh.mode".to_string(), self.mode.clone());
         m
     }

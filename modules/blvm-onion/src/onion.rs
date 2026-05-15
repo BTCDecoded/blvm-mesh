@@ -46,7 +46,7 @@ impl OnionRouteBuilder {
         available_nodes: Vec<NodeId>,
     ) -> Result<Vec<NodeId>, String> {
         let num_hops = self.config.default_hops;
-        
+
         if num_hops < self.config.min_hops || num_hops > self.config.max_hops {
             return Err(format!(
                 "Invalid hop count: {} (must be between {} and {})",
@@ -74,7 +74,7 @@ impl OnionRouteBuilder {
         // TODO: Use proper randomization (rand crate)
         // For now, just take first N nodes
         let mut route = vec![source];
-        
+
         // Select intermediate nodes (excluding source and destination)
         let intermediate_count = (num_hops - 1).min(candidates.len() as u8);
         for i in 0..intermediate_count {
@@ -82,7 +82,7 @@ impl OnionRouteBuilder {
                 route.push(*node);
             }
         }
-        
+
         route.push(destination);
 
         debug!(
@@ -120,4 +120,3 @@ impl OnionRouteBuilder {
         Ok(())
     }
 }
-

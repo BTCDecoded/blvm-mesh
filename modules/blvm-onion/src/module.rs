@@ -52,10 +52,7 @@ impl OnionModule {
             .await
         {
             Ok(Some(decrypted_message)) => {
-                info!(
-                    "Onion message delivered: {} bytes",
-                    decrypted_message.len()
-                );
+                info!("Onion message delivered: {} bytes", decrypted_message.len());
             }
             Ok(None) => {
                 debug!("Onion packet forwarded (intermediate node)");
@@ -84,27 +81,44 @@ impl OnionModule {
             Ok::<_, String>(format!(
                 "Circuits ({}):\n{}",
                 lines.len(),
-                if lines.is_empty() { "  (none)".into() } else { lines.join("\n") },
+                if lines.is_empty() {
+                    "  (none)".into()
+                } else {
+                    lines.join("\n")
+                },
             ))
         })
     }
 
     #[command]
-    fn create_circuit(&self, _ctx: &InvocationContext, destination_hex: String) -> Result<String, ModuleError> {
+    fn create_circuit(
+        &self,
+        _ctx: &InvocationContext,
+        destination_hex: String,
+    ) -> Result<String, ModuleError> {
         let dest_hex = destination_hex.trim();
         if dest_hex.is_empty() || dest_hex.len() != 64 {
-            return Err(ModuleError::Other("Usage: create-circuit <destination_node_id_hex_64chars>".into()));
+            return Err(ModuleError::Other(
+                "Usage: create-circuit <destination_node_id_hex_64chars>".into(),
+            ));
         }
-        let bytes = hex::decode(dest_hex).map_err(|_| ModuleError::Other("Invalid destination: must be 64 hex chars (32 bytes)".into()))?;
+        let bytes = hex::decode(dest_hex).map_err(|_| {
+            ModuleError::Other("Invalid destination: must be 64 hex chars (32 bytes)".into())
+        })?;
         if bytes.len() != 32 {
-            return Err(ModuleError::Other("Invalid destination: must be 64 hex chars (32 bytes)".into()));
+            return Err(ModuleError::Other(
+                "Invalid destination: must be 64 hex chars (32 bytes)".into(),
+            ));
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
         let messaging = Arc::clone(&self.onion_messaging);
         run_async(async move {
             let circuit_id = messaging.create_circuit(arr, vec![]).await?;
-            Ok::<_, String>(format!("Circuit created: {}...", hex::encode(&circuit_id[..8])))
+            Ok::<_, String>(format!(
+                "Circuit created: {}...",
+                hex::encode(&circuit_id[..8])
+            ))
         })
     }
 }

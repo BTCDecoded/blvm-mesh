@@ -208,74 +208,84 @@ mod tests {
     #[test]
     fn test_onion_encryption_simple_route() {
         let encryption = OnionEncryption::new();
-        
+
         let node_a = create_test_node_id(1);
         let node_b = create_test_node_id(2);
         let route = vec![node_a, node_b];
-        
+
         let message = b"Hello, onion routing!".to_vec();
-        
+
         // Encrypt
-        let encrypted = encryption.encrypt_onion(message.clone(), &route)
+        let encrypted = encryption
+            .encrypt_onion(message.clone(), &route)
             .expect("Encryption should succeed");
-        
+
         // Node A decrypts first layer
-        let (next_hop, inner_payload) = encryption.decrypt_layer(&encrypted, node_a)
+        let (next_hop, inner_payload) = encryption
+            .decrypt_layer(&encrypted, node_a)
             .expect("Node A should decrypt successfully");
-        
+
         assert_eq!(next_hop, Some(node_b), "Next hop should be node B");
-        
+
         // Node B decrypts final layer
         // Create a new OnionMessage with the inner payload
         let inner_message = OnionMessage {
             encrypted_payload: inner_payload,
             route_hint: None,
         };
-        
-        let (final_hop, final_message) = encryption.decrypt_layer(&inner_message, node_b)
+
+        let (final_hop, final_message) = encryption
+            .decrypt_layer(&inner_message, node_b)
             .expect("Node B should decrypt successfully");
-        
+
         assert_eq!(final_hop, None, "Node B should be destination");
-        assert_eq!(final_message, message, "Final message should match original");
+        assert_eq!(
+            final_message, message,
+            "Final message should match original"
+        );
     }
 
     #[test]
     fn test_onion_encryption_three_hop_route() {
         let encryption = OnionEncryption::new();
-        
+
         let node_a = create_test_node_id(1);
         let node_b = create_test_node_id(2);
         let node_c = create_test_node_id(3);
         let route = vec![node_a, node_b, node_c];
-        
+
         let message = b"Three-hop onion route test".to_vec();
-        
+
         // Encrypt
-        let encrypted = encryption.encrypt_onion(message.clone(), &route)
+        let encrypted = encryption
+            .encrypt_onion(message.clone(), &route)
             .expect("Encryption should succeed");
-        
+
         // Node A decrypts first layer
-        let (next_hop_a, payload_a) = encryption.decrypt_layer(&encrypted, node_a)
+        let (next_hop_a, payload_a) = encryption
+            .decrypt_layer(&encrypted, node_a)
             .expect("Node A should decrypt");
         assert_eq!(next_hop_a, Some(node_b));
-        
+
         // Node B decrypts second layer
         let inner_message_b = OnionMessage {
             encrypted_payload: payload_a,
             route_hint: None,
         };
-        let (next_hop_b, payload_b) = encryption.decrypt_layer(&inner_message_b, node_b)
+        let (next_hop_b, payload_b) = encryption
+            .decrypt_layer(&inner_message_b, node_b)
             .expect("Node B should decrypt");
         assert_eq!(next_hop_b, Some(node_c));
-        
+
         // Node C decrypts final layer
         let inner_message_c = OnionMessage {
             encrypted_payload: payload_b,
             route_hint: None,
         };
-        let (final_hop, final_message) = encryption.decrypt_layer(&inner_message_c, node_c)
+        let (final_hop, final_message) = encryption
+            .decrypt_layer(&inner_message_c, node_c)
             .expect("Node C should decrypt");
-        
+
         assert_eq!(final_hop, None);
         assert_eq!(final_message, message);
     }
@@ -283,17 +293,18 @@ mod tests {
     #[test]
     fn test_onion_encryption_wrong_node_fails() {
         let encryption = OnionEncryption::new();
-        
+
         let node_a = create_test_node_id(1);
         let node_b = create_test_node_id(2);
         let node_c = create_test_node_id(3); // Not in route
         let route = vec![node_a, node_b];
-        
+
         let message = b"Test message".to_vec();
-        
-        let encrypted = encryption.encrypt_onion(message, &route)
+
+        let encrypted = encryption
+            .encrypt_onion(message, &route)
             .expect("Encryption should succeed");
-        
+
         // Node C tries to decrypt (should fail)
         let result = encryption.decrypt_layer(&encrypted, node_c);
         assert!(result.is_err(), "Node C should not be able to decrypt");
@@ -302,12 +313,12 @@ mod tests {
     #[test]
     fn test_onion_encryption_route_too_short() {
         let encryption = OnionEncryption::new();
-        
+
         let node_a = create_test_node_id(1);
         let route = vec![node_a]; // Only one node
-        
+
         let message = b"Test".to_vec();
-        
+
         let result = encryption.encrypt_onion(message, &route);
         assert!(result.is_err(), "Route with < 2 nodes should fail");
     }

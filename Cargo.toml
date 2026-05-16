@@ -28,7 +28,7 @@ thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
-blvm-node = ">=0.1, <1"
+blvm-node = { version = ">=0.1, <1", features = ["sled"] }
 blvm-sdk = { version = ">=0.1, <1", default-features = false, features = ["node"] }
 blvm-sdk-macros = ">=0.1, <1"
 blvm-protocol = ">=0.1, <1"

@@ -10,8 +10,3 @@ capabilities = [
 ]
 
 # CI fills url/sha256 on release — root `blvm-mesh` binary; see `modules/*/module.toml` for workspace members.
-[downloads]
-x86_64-linux   = { url = "", sha256 = "" }
-aarch64-linux  = { url = "", sha256 = "" }
-x86_64-windows = { url = "", sha256 = "" }
-

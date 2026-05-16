@@ -10,10 +10,5 @@ capabilities = [
 ]
 
 # CI/release fills url/sha256 (same platform keys as blvm-zmq) when this binary ships standalone.
-[downloads]
-x86_64-linux   = { url = "", sha256 = "" }
-aarch64-linux  = { url = "", sha256 = "" }
-x86_64-windows = { url = "", sha256 = "" }
-
 [dependencies]
 "blvm-mesh" = ">=0.1.0"

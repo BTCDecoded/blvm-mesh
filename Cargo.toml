@@ -102,7 +102,7 @@ blvm-protocol.workspace = true
 [features]
 default = []
 # CTV (CheckTemplateVerify) payment proofs for mesh routing
-ctv = ["blvm-protocol/ctv"]
+ctv = ["blvm-protocol/ctv", "blvm-node/ctv"]
 
 [dev-dependencies]
 # Testing

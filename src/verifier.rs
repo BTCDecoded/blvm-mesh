@@ -248,23 +248,29 @@ impl PaymentVerifier {
             ));
         }
 
-        // Verify template hash (recalculate and compare)
-        // The template hash should match the proof's template hash
+        // Verify template hash and output structure via the public covenant API.
         use blvm_node::payment::covenant::CovenantEngine;
+        use blvm_protocol::payment::PaymentOutput;
         let covenant_engine = CovenantEngine::new();
-
-        // Recalculate template hash for the proof's transaction template
-        match covenant_engine.calculate_template_hash_for_template(&proof.transaction_template, 0) {
-            Ok(recalculated_hash) => {
-                if recalculated_hash != proof.template_hash {
-                    warn!("CTV template hash mismatch");
-                    return Ok(VerificationResult::failure(
-                        "CTV covenant proof template hash verification failed".to_string(),
-                    ));
-                }
+        let expected_outputs: Vec<PaymentOutput> = proof
+            .transaction_template
+            .outputs
+            .iter()
+            .map(|o| PaymentOutput {
+                amount: Some(o.value),
+                script: o.script_pubkey.clone(),
+            })
+            .collect();
+        match covenant_engine.verify_covenant_proof(&proof, &expected_outputs) {
+            Ok(true) => {}
+            Ok(false) => {
+                warn!("CTV covenant proof verification failed");
+                return Ok(VerificationResult::failure(
+                    "CTV covenant proof template hash verification failed".to_string(),
+                ));
             }
             Err(e) => {
-                warn!("Failed to recalculate CTV template hash: {}", e);
+                warn!("Failed to verify CTV covenant proof: {}", e);
                 return Ok(VerificationResult::failure(format!(
                     "CTV template hash calculation error: {}",
                     e

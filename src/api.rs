@@ -278,10 +278,8 @@ impl ModuleAPI for MeshModuleAPI {
             }
 
             "handle_mesh_packet" => {
-                let (packet_data, peer_addr): (Vec<u8>, String) =
-                    bincode::deserialize(params).map_err(|e| {
-                        ModuleError::OperationError(format!("Invalid request: {e}"))
-                    })?;
+                let (packet_data, peer_addr): (Vec<u8>, String) = bincode::deserialize(params)
+                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
                 self.manager
                     .handle_mesh_packet_received(&packet_data, &peer_addr)
                     .await
@@ -295,9 +293,8 @@ impl ModuleAPI for MeshModuleAPI {
                     destination: NodeId,
                     base_fee_sats: u64,
                 }
-                let req: QuoteRequest = bincode::deserialize(params).map_err(|e| {
-                    ModuleError::OperationError(format!("Invalid request: {e}"))
-                })?;
+                let req: QuoteRequest = bincode::deserialize(params)
+                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
                 let fee = self
                     .manager
                     .quote_route_fee_sats(req.destination, req.base_fee_sats);

@@ -71,7 +71,6 @@ pub fn extract_mesh_packet(data: &[u8]) -> Option<Result<MeshPacket, MeshError>>
 mod tests {
     use super::*;
     use crate::packet::PacketType;
-    use crate::routing::NodeId;
 
     #[test]
     fn test_is_mesh_packet() {

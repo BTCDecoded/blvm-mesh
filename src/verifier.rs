@@ -98,8 +98,8 @@ impl PaymentVerifier {
         );
 
         // Parse BOLT11 invoice
-        use lightning_invoice::Invoice;
-        let parsed_invoice = match Invoice::from_str(invoice) {
+        use lightning_invoice::Bolt11Invoice;
+        let parsed_invoice = match Bolt11Invoice::from_str(invoice) {
             Ok(inv) => inv,
             Err(e) => {
                 warn!("Failed to parse Lightning invoice: {:?}", e);
@@ -115,18 +115,8 @@ impl PaymentVerifier {
         let preimage_hash = Sha256::digest(preimage);
 
         // Get payment hash from invoice
-        // lightning-invoice 0.2: payment_hash() returns &Sha256 (which wraps sha256::Hash)
-        // Convert hash to bytes via hex string (sha256::Hash Display outputs hex)
-        let invoice_payment_hash = parsed_invoice.payment_hash();
-        let hash_str = format!("{}", invoice_payment_hash.0);
-        let invoice_hash_bytes = hex::decode(hash_str).map_err(|e| {
-            MeshError::PaymentError(format!("Failed to decode payment hash: {e}"))
-        })?;
-        let mut invoice_hash_array = [0u8; 32];
-        invoice_hash_array.copy_from_slice(&invoice_hash_bytes[..32]);
-
-        // Verify preimage hash matches invoice payment hash
-        if preimage_hash.as_slice() != invoice_hash_array.as_slice() {
+        use bitcoin::hashes::Hash;
+        if preimage_hash.as_slice() != parsed_invoice.payment_hash().as_byte_array() {
             warn!("Payment hash mismatch: preimage hash does not match invoice");
             return Ok(VerificationResult::failure(
                 "Payment preimage hash does not match invoice payment hash".to_string(),
@@ -134,9 +124,7 @@ impl PaymentVerifier {
         }
 
         // Verify amount matches when the invoice encodes an amount.
-        if let Some(pico) = parsed_invoice.amount_pico_btc() {
-            // BOLT11 amount is in pico-BTC; 1 msat = 10 pico-BTC.
-            let invoice_msats = pico / 10;
+        if let Some(invoice_msats) = parsed_invoice.amount_milli_satoshis() {
             if invoice_msats != amount_msats {
                 warn!(
                     "Invoice amount mismatch: proof={} msats, invoice={} msats",
@@ -214,12 +202,11 @@ impl PaymentVerifier {
             }
         }
 
-        if let Ok(Some(state)) = self
-            .node_api
-            .get_payment_state(payment_request_id)
-            .await
-        {
-            debug!("On-chain payment state for {}: {:?}", payment_request_id, state);
+        if let Ok(Some(state)) = self.node_api.get_payment_state(payment_request_id).await {
+            debug!(
+                "On-chain payment state for {}: {:?}",
+                payment_request_id, state
+            );
             if state.amount_sats != amount_sats {
                 return Ok(VerificationResult::failure(format!(
                     "payment state amount mismatch: expected {} sats, got {}",

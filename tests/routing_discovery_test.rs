@@ -29,8 +29,13 @@ fn now_secs() -> u64 {
 #[tokio::test]
 async fn handle_mesh_packet_api_round_trip() {
     let local = id(9);
-    let manager =
-        MeshManager::new_for_test(true, MeshMode::Open, local, Arc::new(TestNodeAPI::default())).await;
+    let manager = MeshManager::new_for_test(
+        true,
+        MeshMode::Open,
+        local,
+        Arc::new(TestNodeAPI::default()),
+    )
+    .await;
     let api = MeshModuleAPI::new(Arc::new(manager));
     let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"api".to_vec());
     let wire = serialize_mesh_packet(&packet).unwrap();
@@ -52,8 +57,13 @@ async fn mesh_identity_node_id_is_ed25519_pubkey() {
 
 #[tokio::test]
 async fn load_configured_peers_from_structured_config() {
-    let manager =
-        MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
+    let manager = MeshManager::new_for_test(
+        true,
+        MeshMode::Open,
+        id(1),
+        Arc::new(TestNodeAPI::default()),
+    )
+    .await;
     let config = MeshConfig {
         enabled: true,
         peers: vec![MeshPeerEntry {
@@ -70,8 +80,13 @@ async fn load_configured_peers_from_structured_config() {
 
 #[tokio::test]
 async fn mesh_hello_updates_routing_table_with_ed25519_id() {
-    let local =
-        MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
+    let local = MeshManager::new_for_test(
+        true,
+        MeshMode::Open,
+        id(1),
+        Arc::new(TestNodeAPI::default()),
+    )
+    .await;
     let peer_identity = MeshIdentity::from_seed(55);
     let peer_id = peer_identity.node_id();
 
@@ -127,13 +142,19 @@ async fn route_discovery_returns_path_when_intermediate_has_direct_peer() {
         DiscoveryMessage::RouteResponse { route, .. } => {
             assert_eq!(route, vec![id(1), id(2), id(3)]);
         }
-        other => panic!("unexpected discovery message: {:?}", other),
+        other => panic!("unexpected discovery message: {other:?}"),
     }
 }
 
 #[tokio::test]
 async fn three_node_forward_chain() {
-    let b = MeshManager::new_for_test(true, MeshMode::Open, id(2), Arc::new(TestNodeAPI::default())).await;
+    let b = MeshManager::new_for_test(
+        true,
+        MeshMode::Open,
+        id(2),
+        Arc::new(TestNodeAPI::default()),
+    )
+    .await;
     b.add_peer_with_id("127.0.0.1:3", Some(id(3))).unwrap();
 
     let packet = MeshPacket::new(PacketType::Paid, id(1), id(3), b"hop".to_vec());
@@ -162,10 +183,15 @@ async fn payment_gated_rejects_forward_without_proof() {
         Arc::new(TestNodeAPI::default()),
     )
     .await;
-    manager.add_peer_with_id("127.0.0.1:3", Some(id(3))).unwrap();
+    manager
+        .add_peer_with_id("127.0.0.1:3", Some(id(3)))
+        .unwrap();
 
     let packet = MeshPacket::new(PacketType::Paid, id(1), id(3), b"unpaid".to_vec());
-    let err = manager.handle_incoming_packet(&packet, None).await.unwrap_err();
+    let err = manager
+        .handle_incoming_packet(&packet, None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         err,
         blvm_mesh::error::MeshError::PaymentVerification(_)

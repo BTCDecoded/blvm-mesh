@@ -29,7 +29,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 blvm-node = { version = ">=0.1, <1", features = ["sled"] }
-blvm-sdk = { version = ">=0.1, <1", default-features = false, features = ["node"] }
+blvm-sdk = { version = ">=0.1.13, <1", default-features = false, features = ["node"] }
 blvm-sdk-macros = ">=0.1, <1"
 blvm-protocol = ">=0.1, <1"
 blvm-consensus = ">=0.1, <1"
@@ -78,7 +78,7 @@ secp256k1 = { version = "0.28", features = ["rand"] }
 sha2 = "0.10"
 hex = "0.4"
 bitcoin = "0.32"
-lightning-invoice = "0.2"
+lightning-invoice = { version = "0.32", features = ["std"] }
 dashmap = "5.5"
 lru = "0.12"
 reqwest = { version = "0.12", features = ["json"] }
@@ -96,7 +96,7 @@ ctv = ["blvm-protocol/ctv", "blvm-node/ctv"]
 [dev-dependencies]
 tokio-test = "0.4"
 bitcoin_hashes = "0.3.2"
-secp256k1 = "0.12"
+secp256k1 = { version = "0.28", features = ["recovery"] }
 
 # Local monorepo: sibling paths override workspace dependency versions for all workspace members.
 # Strip this section in CI/release (BTCDecoded/rust-ci/strip-patch-crates-io@main).

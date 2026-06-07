@@ -60,9 +60,9 @@ async fn main() -> Result<()> {
     };
 
     let dispatch = |invocation: InvocationMessage,
-                      ctx: InvocationContext,
-                      module: &MeshModule,
-                      cli: &MeshModule| {
+                    ctx: InvocationContext,
+                    module: &MeshModule,
+                    cli: &MeshModule| {
         let (success, payload, error) = match &invocation.invocation_type {
             InvocationType::Cli { subcommand, args } => {
                 let args: Vec<String> = args.clone();

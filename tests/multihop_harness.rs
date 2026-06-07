@@ -12,9 +12,15 @@ async fn three_node_a_to_b_to_c_delivery() {
     let api_b = Arc::new(TestNodeAPI::default());
     let api_c = Arc::new(TestNodeAPI::default());
 
-    let a = MeshManager::new_for_test_with_seed(true, MeshMode::Open, 1, Arc::clone(&api_a) as Arc<_>).await;
-    let b = MeshManager::new_for_test_with_seed(true, MeshMode::Open, 2, Arc::clone(&api_b) as Arc<_>).await;
-    let c = MeshManager::new_for_test_with_seed(true, MeshMode::Open, 3, Arc::clone(&api_c) as Arc<_>).await;
+    let a =
+        MeshManager::new_for_test_with_seed(true, MeshMode::Open, 1, Arc::clone(&api_a) as Arc<_>)
+            .await;
+    let b =
+        MeshManager::new_for_test_with_seed(true, MeshMode::Open, 2, Arc::clone(&api_b) as Arc<_>)
+            .await;
+    let c =
+        MeshManager::new_for_test_with_seed(true, MeshMode::Open, 3, Arc::clone(&api_c) as Arc<_>)
+            .await;
 
     let a_id = a.node_id();
     let b_id = b.node_id();

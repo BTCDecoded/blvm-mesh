@@ -104,9 +104,7 @@ impl MeshModule {
             .map(|(node_id, is_direct, hops, cost)| {
                 let node_hex = hex::encode(&node_id[..8]);
                 let kind = if *is_direct { "direct" } else { "hop" };
-                format!(
-                    "  {node_hex}... {kind} hops={hops} cost={cost} sats"
-                )
+                format!("  {node_hex}... {kind} hops={hops} cost={cost} sats")
             })
             .collect();
         Ok(format!(

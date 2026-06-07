@@ -43,10 +43,7 @@ impl NodeAPI for OnChainMockNode {
         Ok(self.payments.lock().unwrap().get(id).cloned())
     }
 
-    async fn get_block(
-        &self,
-        h: &Hash,
-    ) -> Result<Option<blvm_protocol::Block>, ModuleError> {
+    async fn get_block(&self, h: &Hash) -> Result<Option<blvm_protocol::Block>, ModuleError> {
         self.inner.get_block(h).await
     }
     async fn get_block_header(
@@ -109,9 +106,7 @@ impl NodeAPI for OnChainMockNode {
     ) -> Result<Vec<blvm_node::module::traits::PeerInfo>, ModuleError> {
         self.inner.get_network_peers().await
     }
-    async fn get_chain_info(
-        &self,
-    ) -> Result<blvm_node::module::traits::ChainInfo, ModuleError> {
+    async fn get_chain_info(&self) -> Result<blvm_node::module::traits::ChainInfo, ModuleError> {
         self.inner.get_chain_info().await
     }
     async fn get_block_by_height(
@@ -258,13 +253,7 @@ impl NodeAPI for OnChainMockNode {
     }
     async fn get_all_module_health(
         &self,
-    ) -> Result<
-        Vec<(
-            String,
-            blvm_node::module::process::monitor::ModuleHealth,
-        )>,
-        ModuleError,
-    > {
+    ) -> Result<Vec<(String, blvm_node::module::process::monitor::ModuleHealth)>, ModuleError> {
         self.inner.get_all_module_health().await
     }
     async fn report_module_health(
@@ -329,9 +318,7 @@ impl NodeAPI for OnChainMockNode {
     async fn replace_tx_serve_denylist(&self, h: &[Hash]) -> Result<(), ModuleError> {
         self.inner.replace_tx_serve_denylist(h).await
     }
-    async fn get_sync_status(
-        &self,
-    ) -> Result<blvm_node::module::traits::SyncStatus, ModuleError> {
+    async fn get_sync_status(&self) -> Result<blvm_node::module::traits::SyncStatus, ModuleError> {
         self.inner.get_sync_status().await
     }
     async fn ban_peer(&self, p: &str, t: Option<u64>) -> Result<(), ModuleError> {

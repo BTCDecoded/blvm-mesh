@@ -479,8 +479,6 @@ impl NodeAPI for MockNodeAPI {
 async fn test_payment_verifier_creation() {
     let node_api = Arc::new(MockNodeAPI);
     let _verifier = PaymentVerifier::new(node_api);
-    // Verifier should be created successfully
-    assert!(true); // Basic creation test
 }
 
 #[tokio::test]

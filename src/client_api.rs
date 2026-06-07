@@ -171,11 +171,7 @@ impl MeshClient {
     pub async fn get_peer_list(&self) -> Result<Vec<PeerEntry>, ModuleError> {
         let response = self
             .node_api
-            .call_module(
-                Some(&self.mesh_module_id),
-                "get_peer_list",
-                Vec::new(),
-            )
+            .call_module(Some(&self.mesh_module_id), "get_peer_list", Vec::new())
             .await?;
         bincode::deserialize(&response)
             .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {e}")))

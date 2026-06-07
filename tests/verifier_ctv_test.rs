@@ -3,8 +3,8 @@
 #![cfg(feature = "ctv")]
 
 use blvm_mesh::payment_proof::PaymentProof;
-use blvm_mesh::verifier::PaymentVerifier;
 use blvm_mesh::test_support::TestNodeAPI;
+use blvm_mesh::verifier::PaymentVerifier;
 use blvm_node::payment::covenant::CovenantEngine;
 use blvm_protocol::payment::PaymentOutput;
 use std::sync::Arc;

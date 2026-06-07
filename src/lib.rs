@@ -1,8 +1,8 @@
 //! Commons Mesh networking module for blvm-node
 
 pub mod api;
-pub mod client_api;
 pub mod app_transport;
+pub mod client_api;
 pub mod config;
 pub mod discovery;
 pub mod edge_transport;

@@ -106,13 +106,11 @@ impl MeshManager {
         let identity = Arc::new(MeshIdentity::load_or_create(data_dir)?);
         let node_id = identity.node_id();
 
-        let rate_limit = _config
-            .map(|c| c.rate_limit_per_minute)
-            .unwrap_or_else(|| {
-                ctx.get_config_or("mesh.rate_limit_per_minute", "120")
-                    .parse::<u32>()
-                    .unwrap_or(120)
-            });
+        let rate_limit = _config.map(|c| c.rate_limit_per_minute).unwrap_or_else(|| {
+            ctx.get_config_or("mesh.rate_limit_per_minute", "120")
+                .parse::<u32>()
+                .unwrap_or(120)
+        });
         let rate_limiter = Arc::new(RateLimiter::new(rate_limit, 60));
 
         debug!(
@@ -162,12 +160,7 @@ impl MeshManager {
         out
     }
 
-    async fn enqueue_local_delivery(
-        &self,
-        protocol_id: &str,
-        payload: Vec<u8>,
-        source: NodeId,
-    ) {
+    async fn enqueue_local_delivery(&self, protocol_id: &str, payload: Vec<u8>, source: NodeId) {
         let mut queue = self.local_delivery_queue.lock().await;
         if queue.len() >= LOCAL_DELIVERY_QUEUE_CAP {
             warn!(
@@ -575,8 +568,7 @@ impl MeshManager {
             )));
         }
         let packet = deserialize_mesh_packet(packet_data)?;
-        self.handle_incoming_packet(&packet, Some(peer_addr))
-            .await
+        self.handle_incoming_packet(&packet, Some(peer_addr)).await
     }
 
     /// Handle an incoming mesh packet
@@ -598,11 +590,7 @@ impl MeshManager {
             .check_and_record(&rate_key)
             .map_err(MeshError::RateLimited)?;
 
-        if let Some(protocol) = packet
-            .metadata
-            .as_ref()
-            .and_then(|m| m.protocol.as_deref())
-        {
+        if let Some(protocol) = packet.metadata.as_ref().and_then(|m| m.protocol.as_deref()) {
             match protocol {
                 PROTOCOL_HELLO => {
                     return self
@@ -628,11 +616,7 @@ impl MeshManager {
 
         // Check if packet is for this node
         if packet.is_for_me(&self.node_id) {
-            if let Some(protocol) = packet
-                .metadata
-                .as_ref()
-                .and_then(|m| m.protocol.as_deref())
-            {
+            if let Some(protocol) = packet.metadata.as_ref().and_then(|m| m.protocol.as_deref()) {
                 if protocol != PROTOCOL_HELLO && protocol != PROTOCOL_DISCOVERY {
                     self.enqueue_local_delivery(protocol, packet.payload.clone(), packet.source)
                         .await;
@@ -652,10 +636,7 @@ impl MeshManager {
         // Forward if we're on the packet route or have a table route to the destination.
         let can_reach = packet.should_forward(&self.node_id)
             || self.routing_table.find_route(&packet.destination).is_some()
-            || self
-                .routing_table
-                .get_route(&packet.destination)
-                .is_some();
+            || self.routing_table.get_route(&packet.destination).is_some();
 
         if can_reach {
             debug!(
@@ -691,16 +672,11 @@ impl MeshManager {
                             ..
                         } = &event_msg.payload
                         {
-                            if let Some(bytes) = peer_node_id
-                                .as_ref()
-                                .filter(|b| b.len() == 32)
-                            {
+                            if let Some(bytes) = peer_node_id.as_ref().filter(|b| b.len() == 32) {
                                 let mut id = [0u8; 32];
                                 id.copy_from_slice(bytes);
-                                self.routing_table.add_direct_peer(
-                                    id,
-                                    peer_addr.as_bytes().to_vec(),
-                                );
+                                self.routing_table
+                                    .add_direct_peer(id, peer_addr.as_bytes().to_vec());
                                 info!(
                                     "Peer identity updated: addr={}, node_id={:x?}",
                                     peer_addr,
@@ -710,10 +686,8 @@ impl MeshManager {
                             }
 
                             let derived = Self::derive_node_id_from_address(peer_addr);
-                            self.routing_table.add_direct_peer(
-                                derived,
-                                peer_addr.as_bytes().to_vec(),
-                            );
+                            self.routing_table
+                                .add_direct_peer(derived, peer_addr.as_bytes().to_vec());
 
                             info!(
                                 "Peer connected: addr={}, transport={}",
@@ -801,11 +775,7 @@ impl MeshManager {
         let node_id = node_id.unwrap_or_else(|| Self::derive_node_id_from_address(addr));
         let address_bytes = addr.as_bytes().to_vec();
         self.routing_table.add_direct_peer(node_id, address_bytes);
-        info!(
-            "Added peer: addr={}, node_id={:x?}",
-            addr,
-            &node_id[..8]
-        );
+        info!("Added peer: addr={}, node_id={:x?}", addr, &node_id[..8]);
         Ok(())
     }
 
@@ -1160,11 +1130,7 @@ impl MeshManager {
         let replay_prevention = Arc::new(Mutex::new(ReplayPrevention::new(REPLAY_EXPIRY_SECONDS)));
         const ROUTE_EXPIRY_SECONDS: u64 = 60 * 60;
         let routing_table = Arc::new(RoutingTable::new(ROUTE_EXPIRY_SECONDS));
-        let route_discovery = Arc::new(RouteDiscovery::new(
-            Arc::clone(&routing_table),
-            10,
-            30,
-        ));
+        let route_discovery = Arc::new(RouteDiscovery::new(Arc::clone(&routing_table), 10, 30));
         let node_id = node_id_override.unwrap_or_else(|| identity.node_id());
 
         Self {
@@ -1234,8 +1200,13 @@ mod tests {
 
     #[tokio::test]
     async fn add_peer_with_explicit_node_id_stores_route() {
-        let manager =
-            MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
         let peer_id = id(2);
         manager
             .add_peer_with_id("127.0.0.1:18333", Some(peer_id))
@@ -1248,8 +1219,13 @@ mod tests {
 
     #[tokio::test]
     async fn add_peer_without_node_id_derives_from_address() {
-        let manager =
-            MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
         manager.add_peer("10.0.0.1:8333").unwrap();
         let expected = MeshManager::derive_node_id_from_address("10.0.0.1:8333");
         let peers = manager.list_direct_peers();
@@ -1259,8 +1235,13 @@ mod tests {
     #[tokio::test]
     async fn handle_incoming_packet_delivers_when_destination_matches() {
         let local = id(42);
-        let manager =
-            MeshManager::new_for_test(true, MeshMode::Open, local, Arc::new(TestNodeAPI::default())).await;
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            local,
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
         let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"hello".to_vec());
         manager.handle_incoming_packet(&packet, None).await.unwrap();
     }
@@ -1268,8 +1249,13 @@ mod tests {
     #[tokio::test]
     async fn local_delivery_enqueued_for_app_protocol() {
         let local = id(42);
-        let manager =
-            MeshManager::new_for_test(true, MeshMode::Open, local, Arc::new(TestNodeAPI::default())).await;
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            local,
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
         let mut packet = MeshPacket::new(PacketType::Paid, id(1), local, b"ukm-json".to_vec());
         packet.metadata = Some(PacketMetadata {
             protocol: Some("bitsov-ukm-v1".to_string()),
@@ -1281,14 +1267,22 @@ mod tests {
             .await;
         assert_eq!(deliveries.len(), 1);
         assert_eq!(deliveries[0].payload, b"ukm-json");
-        assert!(manager.poll_local_deliveries(Some("bitsov-ukm-v1"), 8).await.is_empty());
+        assert!(manager
+            .poll_local_deliveries(Some("bitsov-ukm-v1"), 8)
+            .await
+            .is_empty());
     }
 
     #[tokio::test]
     async fn handle_mesh_packet_received_deserializes_and_delivers() {
         let local = id(7);
-        let manager =
-            MeshManager::new_for_test(true, MeshMode::Open, local, Arc::new(TestNodeAPI::default())).await;
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            local,
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
         let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"wire".to_vec());
         let wire = serialize_mesh_packet(&packet).unwrap();
         manager
@@ -1299,9 +1293,16 @@ mod tests {
 
     #[tokio::test]
     async fn route_packet_open_mode_accepts_paid_without_proof() {
-        let manager =
-            MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
-        manager.add_peer_with_id("127.0.0.1:2", Some(id(2))).unwrap();
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        manager
+            .add_peer_with_id("127.0.0.1:2", Some(id(2)))
+            .unwrap();
         let packet = MeshPacket::new(PacketType::Paid, id(1), id(2), b"payload".to_vec());
         manager.route_packet(&packet).await.unwrap();
     }
@@ -1315,7 +1316,9 @@ mod tests {
             Arc::new(TestNodeAPI::default()),
         )
         .await;
-        manager.add_peer_with_id("127.0.0.1:2", Some(id(2))).unwrap();
+        manager
+            .add_peer_with_id("127.0.0.1:2", Some(id(2)))
+            .unwrap();
         let packet = MeshPacket::new(PacketType::Paid, id(1), id(2), b"payload".to_vec());
         let err = manager.route_packet(&packet).await.unwrap_err();
         assert!(matches!(err, MeshError::PaymentVerification(_)));

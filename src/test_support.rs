@@ -106,8 +106,10 @@ impl NodeAPI for TestNodeAPI {
     async fn subscribe_events(
         &self,
         _: Vec<EventType>,
-    ) -> Result<tokio::sync::mpsc::Receiver<blvm_node::module::ipc::protocol::ModuleMessage>, ModuleError>
-    {
+    ) -> Result<
+        tokio::sync::mpsc::Receiver<blvm_node::module::ipc::protocol::ModuleMessage>,
+        ModuleError,
+    > {
         let (_tx, rx) = tokio::sync::mpsc::channel(1);
         Ok(rx)
     }
@@ -187,9 +189,7 @@ impl NodeAPI for TestNodeAPI {
             created: None,
         })
     }
-    async fn get_all_metrics(
-        &self,
-    ) -> Result<HashMap<String, Vec<Metric>>, ModuleError> {
+    async fn get_all_metrics(&self) -> Result<HashMap<String, Vec<Metric>>, ModuleError> {
         Ok(HashMap::new())
     }
     async fn register_rpc_endpoint(&self, _: String, _: String) -> Result<(), ModuleError> {
@@ -214,11 +214,7 @@ impl NodeAPI for TestNodeAPI {
     async fn cancel_timer(&self, _: TimerId) -> Result<(), ModuleError> {
         Ok(())
     }
-    async fn schedule_task(
-        &self,
-        _: u64,
-        _: Arc<dyn TaskCallback>,
-    ) -> Result<TaskId, ModuleError> {
+    async fn schedule_task(&self, _: u64, _: Arc<dyn TaskCallback>) -> Result<TaskId, ModuleError> {
         Ok(0)
     }
     async fn report_metric(&self, _: Metric) -> Result<(), ModuleError> {
@@ -244,11 +240,7 @@ impl NodeAPI for TestNodeAPI {
     async fn is_module_available(&self, _: &str) -> Result<bool, ModuleError> {
         Ok(false)
     }
-    async fn publish_event(
-        &self,
-        _: EventType,
-        _: EventPayload,
-    ) -> Result<(), ModuleError> {
+    async fn publish_event(&self, _: EventType, _: EventPayload) -> Result<(), ModuleError> {
         Ok(())
     }
     async fn call_module(
@@ -268,9 +260,7 @@ impl NodeAPI for TestNodeAPI {
     async fn get_module_health(&self, _: &str) -> Result<Option<ModuleHealth>, ModuleError> {
         Ok(None)
     }
-    async fn get_all_module_health(
-        &self,
-    ) -> Result<Vec<(String, ModuleHealth)>, ModuleError> {
+    async fn get_all_module_health(&self) -> Result<Vec<(String, ModuleHealth)>, ModuleError> {
         Ok(Vec::new())
     }
     async fn report_module_health(&self, _: ModuleHealth) -> Result<(), ModuleError> {
@@ -284,14 +274,15 @@ impl NodeAPI for TestNodeAPI {
     ) -> Result<(), ModuleError> {
         Ok(())
     }
-    async fn send_mesh_packet_to_peer(&self, peer_addr: String, packet_data: Vec<u8>) -> Result<(), ModuleError> {
+    async fn send_mesh_packet_to_peer(
+        &self,
+        peer_addr: String,
+        packet_data: Vec<u8>,
+    ) -> Result<(), ModuleError> {
         if let Some((hub, from)) = &self.wire {
             hub.deliver(&peer_addr, from.clone(), packet_data);
         } else {
-            self.outbox
-                .lock()
-                .unwrap()
-                .push((peer_addr, packet_data));
+            self.outbox.lock().unwrap().push((peer_addr, packet_data));
         }
         Ok(())
     }
@@ -330,9 +321,7 @@ impl NodeAPI for TestNodeAPI {
     async fn merge_tx_serve_denylist(&self, _: &[Hash]) -> Result<(), ModuleError> {
         Ok(())
     }
-    async fn get_tx_serve_denylist_snapshot(
-        &self,
-    ) -> Result<TxServeDenylistSnapshot, ModuleError> {
+    async fn get_tx_serve_denylist_snapshot(&self) -> Result<TxServeDenylistSnapshot, ModuleError> {
         Ok(TxServeDenylistSnapshot {
             total_count: 0,
             truncated: false,

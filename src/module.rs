@@ -1,6 +1,6 @@
 //! Mesh module: unified CLI via #[module] macro.
 
-use blvm_node::module::traits::EventType;
+use blvm_node::module::ipc::protocol::{EventMessage, ModuleMessage};
 use blvm_sdk::module::prelude::*;
 use blvm_sdk_macros::module;
 use std::path::PathBuf;
@@ -17,6 +17,20 @@ pub struct MeshModule {
 
 #[module]
 impl MeshModule {
+    #[on_event(MeshPacketReceived)]
+    async fn on_mesh_packet_received(
+        &self,
+        packet_data: &[u8],
+        peer_addr: &str,
+        ctx: &InvocationContext,
+    ) -> Result<(), ModuleError> {
+        let _ = ctx;
+        self.manager
+            .handle_mesh_packet_received(packet_data, peer_addr)
+            .await
+            .map_err(|e| ModuleError::Other(e.to_string()))
+    }
+
     #[on_event(
         PeerConnected,
         PeerDisconnected,
@@ -32,21 +46,17 @@ impl MeshModule {
     )]
     async fn on_mesh_event(
         &self,
-        event: &blvm_node::module::ipc::protocol::EventMessage,
+        event: &EventMessage,
         ctx: &InvocationContext,
     ) -> Result<(), ModuleError> {
-        let _ = ctx;
-        match event.event_type {
-            EventType::PeerConnected => tracing::info!("Peer connected event received"),
-            EventType::PeerDisconnected => tracing::info!("Peer disconnected event received"),
-            EventType::MessageReceived => tracing::info!("Message received event"),
-            EventType::PaymentRequestCreated => {
-                tracing::info!("Payment request created event received")
-            }
-            EventType::NewBlock => tracing::info!("New block event received"),
-            _ => {}
-        }
-        Ok(())
+        let node_api = ctx
+            .node_api()
+            .ok_or_else(|| ModuleError::Other("NodeAPI not available".into()))?;
+        let msg = ModuleMessage::Event(event.clone());
+        self.manager
+            .handle_event(&msg, node_api.as_ref())
+            .await
+            .map_err(|e| ModuleError::Other(e.to_string()))
     }
 
     #[command]
@@ -58,12 +68,14 @@ impl MeshModule {
                 "Mesh module\n\
                  Enabled: {}\n\
                  Mode: {:?}\n\
+                 Node ID: {}\n\
                  Direct peers: {}\n\
                  Total routes: {}\n\
                  Cached routes: {}\n\
                  Tracked peers (replay): {}",
                 stats.enabled,
                 stats.mode,
+                hex::encode(manager.node_id()),
                 stats.routing.direct_peers,
                 stats.routing.total_routes,
                 stats.routing.cached_routes,
@@ -93,8 +105,7 @@ impl MeshModule {
                 let node_hex = hex::encode(&node_id[..8]);
                 let kind = if *is_direct { "direct" } else { "hop" };
                 format!(
-                    "  {}... {} hops={} cost={} sats",
-                    node_hex, kind, hops, cost
+                    "  {node_hex}... {kind} hops={hops} cost={cost} sats"
                 )
             })
             .collect();
@@ -115,15 +126,33 @@ impl MeshModule {
     }
 
     #[command]
-    fn add_peer(&self, _ctx: &InvocationContext, address: String) -> Result<String, ModuleError> {
+    fn add_peer(
+        &self,
+        _ctx: &InvocationContext,
+        address: String,
+        node_id_hex: String,
+    ) -> Result<String, ModuleError> {
         let addr = address.trim();
         if addr.is_empty() {
-            return Err(ModuleError::Other("Usage: add-peer <address>".into()));
+            return Err(ModuleError::Other(
+                "Usage: add-peer <address> [node_id_hex]".into(),
+            ));
         }
+        let node_id = if node_id_hex.trim().is_empty() {
+            None
+        } else {
+            Some(
+                MeshManager::parse_node_id_hex(&node_id_hex)
+                    .map_err(|e| ModuleError::Other(e.to_string()))?,
+            )
+        };
         self.manager
-            .add_peer(addr)
+            .add_peer_with_id(addr, node_id)
             .map_err(|e| ModuleError::Other(e.to_string()))?;
-        Ok(format!("Added peer: {}", addr))
+        let id_note = node_id
+            .map(|id| format!(", node_id={}", hex::encode(&id[..8])))
+            .unwrap_or_default();
+        Ok(format!("Added peer: {addr}{id_note}"))
     }
 
     #[command]
@@ -139,7 +168,7 @@ impl MeshModule {
         self.manager
             .remove_peer(addr)
             .map_err(|e| ModuleError::Other(e.to_string()))?;
-        Ok(format!("Removed peer: {}", addr))
+        Ok(format!("Removed peer: {addr}"))
     }
 
     #[command]
@@ -154,7 +183,7 @@ impl MeshModule {
         self.manager
             .set_mode(mesh_mode)
             .map_err(|e| ModuleError::Other(e.to_string()))?;
-        Ok(format!("Mode set to: {}", mode_str))
+        Ok(format!("Mode set to: {mode_str}"))
     }
 
     #[command]
@@ -163,12 +192,12 @@ impl MeshModule {
         _ctx: &InvocationContext,
         destination: String,
         payload: String,
+        protocol_id: String,
     ) -> Result<String, ModuleError> {
         let dest_hex = destination.trim().trim_start_matches("0x");
         if dest_hex.len() != 64 || !dest_hex.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(ModuleError::Other(format!(
-                "Destination must be 64 hex chars (NodeId). Got: {}",
-                destination
+                "Destination must be 64 hex chars (NodeId). Got: {destination}"
             )));
         }
         let dest_bytes = hex::decode(dest_hex).map_err(|e| ModuleError::Other(e.to_string()))?;
@@ -182,14 +211,26 @@ impl MeshModule {
         } else {
             payload.into_bytes()
         };
+        let protocol = protocol_id.trim();
+        let protocol = if protocol.is_empty() {
+            None
+        } else {
+            Some(protocol.to_string())
+        };
         let manager = Arc::clone(&self.manager);
         run_async(async move {
-            let packet = crate::packet::MeshPacket::new(
-                crate::packet::PacketType::BitcoinP2P,
+            let mut packet = crate::packet::MeshPacket::new(
+                crate::packet::PacketType::Paid,
                 manager.node_id(),
                 dest_id,
                 payload_bytes,
             );
+            if let Some(protocol_id) = protocol {
+                packet.metadata = Some(crate::packet::PacketMetadata {
+                    protocol: Some(protocol_id),
+                    fields: std::collections::HashMap::new(),
+                });
+            }
             manager
                 .route_packet(&packet)
                 .await

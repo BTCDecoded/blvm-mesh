@@ -3,9 +3,8 @@
 //! This module determines whether a message requires payment based on protocol detection.
 //! It leverages existing Bitcoin protocol detection rather than creating duplicate logic.
 
-use crate::error::MeshError;
+use crate::packet::PacketType;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{debug, trace};
 
 /// Routing policy for mesh messages
@@ -117,6 +116,21 @@ impl RoutingPolicyEngine {
         // Unknown protocol
         trace!("Unknown protocol detected");
         DetectedProtocol::Unknown
+    }
+
+    /// Map mesh-originated `PacketType` to protocol classification (G7).
+    pub fn packet_type_to_protocol(packet_type: PacketType) -> DetectedProtocol {
+        match packet_type {
+            PacketType::BitcoinP2P => DetectedProtocol::BitcoinP2P,
+            PacketType::CommonsGovernance => DetectedProtocol::CommonsGovernance,
+            PacketType::StratumV2 => DetectedProtocol::StratumV2,
+            PacketType::Paid => DetectedProtocol::MeshPacket,
+        }
+    }
+
+    /// Determine routing policy from mesh packet type (preferred for `MeshPacket`).
+    pub fn determine_policy_for_packet_type(&self, packet_type: PacketType) -> RoutingPolicy {
+        self.determine_policy(Self::packet_type_to_protocol(packet_type))
     }
 
     /// Determine routing policy based on protocol detection and mode
@@ -312,6 +326,27 @@ mod tests {
         // Unknown protocol in open mode should be free
         let protocol = DetectedProtocol::Unknown;
         let policy = engine.determine_policy(protocol);
+        assert_eq!(policy, RoutingPolicy::Free);
+    }
+
+    #[test]
+    fn test_paid_packet_type_payment_gated() {
+        let engine = RoutingPolicyEngine::new(MeshMode::PaymentGated);
+        let policy = engine.determine_policy_for_packet_type(PacketType::Paid);
+        assert_eq!(policy, RoutingPolicy::PaymentRequired);
+    }
+
+    #[test]
+    fn test_paid_packet_type_open_mode() {
+        let engine = RoutingPolicyEngine::new(MeshMode::Open);
+        let policy = engine.determine_policy_for_packet_type(PacketType::Paid);
+        assert_eq!(policy, RoutingPolicy::Free);
+    }
+
+    #[test]
+    fn test_bitcoin_p2p_packet_type_always_free() {
+        let engine = RoutingPolicyEngine::new(MeshMode::PaymentGated);
+        let policy = engine.determine_policy_for_packet_type(PacketType::BitcoinP2P);
         assert_eq!(policy, RoutingPolicy::Free);
     }
 }

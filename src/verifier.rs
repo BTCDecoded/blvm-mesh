@@ -7,7 +7,7 @@ use crate::payment_proof::{PaymentProof, VerificationResult};
 use blvm_node::module::traits::NodeAPI;
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 /// Payment verifier for mesh routing
 pub struct PaymentVerifier {
@@ -54,6 +54,15 @@ impl PaymentVerifier {
                 self.verify_lightning(invoice, preimage, *amount_msats, *timestamp, *expires_at)
                     .await
             }
+            PaymentProof::OnChainSettlement {
+                payment_request_id,
+                tx_hash,
+                amount_sats,
+                timestamp,
+            } => {
+                self.verify_on_chain(payment_request_id, tx_hash, *amount_sats, *timestamp)
+                    .await
+            }
             #[cfg(feature = "ctv")]
             PaymentProof::InstantSettlement {
                 covenant_proof,
@@ -95,8 +104,7 @@ impl PaymentVerifier {
             Err(e) => {
                 warn!("Failed to parse Lightning invoice: {:?}", e);
                 return Ok(VerificationResult::failure(format!(
-                    "Invalid Lightning invoice format: {:?}",
-                    e
+                    "Invalid Lightning invoice format: {e:?}"
                 )));
             }
         };
@@ -112,7 +120,7 @@ impl PaymentVerifier {
         let invoice_payment_hash = parsed_invoice.payment_hash();
         let hash_str = format!("{}", invoice_payment_hash.0);
         let invoice_hash_bytes = hex::decode(hash_str).map_err(|e| {
-            MeshError::PaymentError(format!("Failed to decode payment hash: {}", e))
+            MeshError::PaymentError(format!("Failed to decode payment hash: {e}"))
         })?;
         let mut invoice_hash_array = [0u8; 32];
         invoice_hash_array.copy_from_slice(&invoice_hash_bytes[..32]);
@@ -125,10 +133,20 @@ impl PaymentVerifier {
             ));
         }
 
-        // Verify amount matches (if specified in invoice)
-        // Note: lightning-invoice 0.2 API compatibility - amount verification is optional
-        // We'll skip amount verification for now as the API method may vary by version
-        // Amount verification is not critical for payment proof validation
+        // Verify amount matches when the invoice encodes an amount.
+        if let Some(pico) = parsed_invoice.amount_pico_btc() {
+            // BOLT11 amount is in pico-BTC; 1 msat = 10 pico-BTC.
+            let invoice_msats = pico / 10;
+            if invoice_msats != amount_msats {
+                warn!(
+                    "Invoice amount mismatch: proof={} msats, invoice={} msats",
+                    amount_msats, invoice_msats
+                );
+                return Ok(VerificationResult::failure(format!(
+                    "Lightning amount mismatch: proof has {amount_msats} msats, invoice encodes {invoice_msats} msats"
+                )));
+            }
+        }
 
         // Verify expiry
         let now = std::time::SystemTime::now()
@@ -166,6 +184,69 @@ impl PaymentVerifier {
             amount_msats / 1000, // Convert to satoshis
             timestamp,
             Some(expires_at),
+        ))
+    }
+
+    /// Verify on-chain settlement proof (path 3 — mempool + payment state via NodeAPI).
+    async fn verify_on_chain(
+        &self,
+        payment_request_id: &str,
+        tx_hash: &[u8; 32],
+        amount_sats: u64,
+        timestamp: u64,
+    ) -> Result<VerificationResult, MeshError> {
+        if payment_request_id.is_empty() {
+            return Ok(VerificationResult::failure(
+                "empty payment_request_id".to_string(),
+            ));
+        }
+        if tx_hash.iter().all(|&b| b == 0) {
+            return Ok(VerificationResult::failure("invalid tx_hash".to_string()));
+        }
+        if amount_sats == 0 {
+            return Ok(VerificationResult::failure("zero amount".to_string()));
+        }
+
+        let mut mempool_ok = false;
+        if let Ok(in_mempool) = self.node_api.check_transaction_in_mempool(tx_hash).await {
+            if in_mempool {
+                mempool_ok = true;
+            }
+        }
+
+        if let Ok(Some(state)) = self
+            .node_api
+            .get_payment_state(payment_request_id)
+            .await
+        {
+            debug!("On-chain payment state for {}: {:?}", payment_request_id, state);
+            if state.amount_sats != amount_sats {
+                return Ok(VerificationResult::failure(format!(
+                    "payment state amount mismatch: expected {} sats, got {}",
+                    amount_sats, state.amount_sats
+                )));
+            }
+            if let Some(ref hash) = state.tx_hash {
+                if hash != tx_hash {
+                    return Ok(VerificationResult::failure(
+                        "payment state tx_hash mismatch".to_string(),
+                    ));
+                }
+            }
+            if state.status == "failed" {
+                return Ok(VerificationResult::failure(
+                    "payment state is failed".to_string(),
+                ));
+            }
+            return Ok(VerificationResult::success(amount_sats, timestamp, None));
+        }
+
+        if mempool_ok {
+            return Ok(VerificationResult::success(amount_sats, timestamp, None));
+        }
+
+        Ok(VerificationResult::failure(
+            "transaction not in mempool and no matching payment state".to_string(),
         ))
     }
 
@@ -278,10 +359,6 @@ impl PaymentVerifier {
             }
         }
 
-        // Check if transaction is in mempool or confirmed (optional, via NodeAPI)
-        // For mesh routing, we accept mempool transactions
-        // The covenant proof itself is sufficient proof of payment commitment
-
         debug!("CTV covenant proof verified successfully");
         Ok(VerificationResult::success(amount_sats, timestamp, None))
     }
@@ -313,7 +390,7 @@ impl PaymentVerifier {
         }
 
         // Verify all proofs in parallel
-        let futures: Vec<_> = proofs.iter().map(|proof| self.verify(*proof)).collect();
+        let futures: Vec<_> = proofs.iter().map(|proof| self.verify(proof)).collect();
 
         // Wait for all verifications to complete
         futures::future::join_all(futures)

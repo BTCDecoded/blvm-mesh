@@ -1,8 +1,13 @@
 //! Unit tests for payment verifier
 
+mod ln_helpers;
+mod on_chain_mock;
+
 use blvm_mesh::payment_proof::PaymentProof;
 use blvm_mesh::verifier::PaymentVerifier;
 use blvm_node::module::traits::NodeAPI;
+use ln_helpers::test_lightning_invoice;
+use on_chain_mock::OnChainMockNode;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -503,4 +508,127 @@ async fn test_expired_payment_proof() {
     let verification = result.unwrap();
     assert!(!verification.verified);
     assert!(verification.error.is_some());
+}
+
+#[tokio::test]
+async fn test_on_chain_settlement_stub_accepts_valid_proof() {
+    let tx_hash = [7u8; 32];
+    let node_api = OnChainMockNode::with_mempool_tx(tx_hash);
+    let verifier = PaymentVerifier::new(node_api);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let proof = PaymentProof::OnChainSettlement {
+        payment_request_id: "req-abc".to_string(),
+        tx_hash,
+        amount_sats: 500,
+        timestamp: now,
+    };
+
+    let verification = verifier.verify(&proof).await.unwrap();
+    assert!(verification.verified);
+    assert_eq!(verification.amount, 500);
+}
+
+#[tokio::test]
+async fn test_on_chain_settlement_stub_rejects_zero_amount() {
+    let node_api = Arc::new(MockNodeAPI);
+    let verifier = PaymentVerifier::new(node_api);
+
+    let proof = PaymentProof::OnChainSettlement {
+        payment_request_id: "req-abc".to_string(),
+        tx_hash: [7u8; 32],
+        amount_sats: 0,
+        timestamp: 1,
+    };
+
+    let verification = verifier.verify(&proof).await.unwrap();
+    assert!(!verification.verified);
+}
+
+#[tokio::test]
+async fn test_on_chain_rejects_without_mempool_or_state() {
+    let node_api = Arc::new(MockNodeAPI);
+    let verifier = PaymentVerifier::new(node_api);
+    let proof = PaymentProof::OnChainSettlement {
+        payment_request_id: "req-x".to_string(),
+        tx_hash: [8u8; 32],
+        amount_sats: 100,
+        timestamp: 1,
+    };
+    let v = verifier.verify(&proof).await.unwrap();
+    assert!(!v.verified);
+}
+
+#[tokio::test]
+async fn test_on_chain_accepts_matching_payment_state() {
+    use blvm_node::module::traits::PaymentState;
+    let tx_hash = [9u8; 32];
+    let state = PaymentState {
+        payment_id: "req-state".to_string(),
+        status: "pending".to_string(),
+        amount_sats: 250,
+        tx_hash: Some(tx_hash),
+        confirmations: None,
+    };
+    let node_api = OnChainMockNode::with_payment_state(state);
+    let verifier = PaymentVerifier::new(node_api);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let proof = PaymentProof::OnChainSettlement {
+        payment_request_id: "req-state".to_string(),
+        tx_hash,
+        amount_sats: 250,
+        timestamp: now,
+    };
+    assert!(verifier.verify(&proof).await.unwrap().verified);
+}
+
+#[tokio::test]
+async fn test_lightning_amount_mismatch_rejected() {
+    let node_api = Arc::new(MockNodeAPI);
+    let verifier = PaymentVerifier::new(node_api);
+    let preimage = [3u8; 32];
+    let invoice = test_lightning_invoice(1000, preimage);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let proof = PaymentProof::Lightning {
+        invoice,
+        preimage,
+        amount_msats: 2000,
+        timestamp: now,
+        expires_at: now + 3600,
+    };
+    let v = verifier.verify(&proof).await.unwrap();
+    assert!(!v.verified);
+    assert!(v.error.unwrap().contains("amount mismatch"));
+}
+
+#[tokio::test]
+async fn test_lightning_valid_preimage_and_amount() {
+    let node_api = Arc::new(MockNodeAPI);
+    let verifier = PaymentVerifier::new(node_api);
+    let preimage = [4u8; 32];
+    let amount_msats = 5000;
+    let invoice = test_lightning_invoice(amount_msats, preimage);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let proof = PaymentProof::Lightning {
+        invoice,
+        preimage,
+        amount_msats,
+        timestamp: now,
+        expires_at: now + 3600,
+    };
+    assert!(verifier.verify(&proof).await.unwrap().verified);
 }

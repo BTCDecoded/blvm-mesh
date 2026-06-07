@@ -6,7 +6,6 @@
 use crate::error::MeshError;
 use crate::packet::{MeshPacket, MAX_BINCODE_PAYLOAD_SIZE, MESH_PACKET_MAGIC};
 use bincode;
-use tracing::{debug, warn};
 
 /// Check if data is a mesh packet
 pub fn is_mesh_packet(data: &[u8]) -> bool {
@@ -34,7 +33,7 @@ pub fn deserialize_mesh_packet(data: &[u8]) -> Result<MeshPacket, MeshError> {
 
     // Deserialize packet (skip magic bytes - serialize prepends them)
     let packet: MeshPacket = bincode::deserialize(&data[4..])
-        .map_err(|e| MeshError::InvalidPacket(format!("Failed to deserialize packet: {}", e)))?;
+        .map_err(|e| MeshError::InvalidPacket(format!("Failed to deserialize packet: {e}")))?;
 
     Ok(packet)
 }
@@ -42,11 +41,11 @@ pub fn deserialize_mesh_packet(data: &[u8]) -> Result<MeshPacket, MeshError> {
 /// Serialize mesh packet to bytes
 pub fn serialize_mesh_packet(packet: &MeshPacket) -> Result<Vec<u8>, MeshError> {
     // Validate packet before serialization
-    packet.validate().map_err(|e| MeshError::InvalidPacket(e))?;
+    packet.validate().map_err(MeshError::InvalidPacket)?;
 
     // Serialize packet
-    let mut data = bincode::serialize(packet)
-        .map_err(|e| MeshError::InvalidPacket(format!("Failed to serialize packet: {}", e)))?;
+    let data = bincode::serialize(packet)
+        .map_err(|e| MeshError::InvalidPacket(format!("Failed to serialize packet: {e}")))?;
 
     // Prepend magic bytes (if not already included)
     // In production, network layer might handle magic bytes

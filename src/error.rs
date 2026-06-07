@@ -36,4 +36,7 @@ pub enum MeshError {
 
     #[error("Network error: {0}")]
     NetworkError(String),
+
+    #[error("Rate limit exceeded: {0}")]
+    RateLimited(String),
 }

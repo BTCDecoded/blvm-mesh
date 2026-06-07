@@ -12,7 +12,7 @@ use blvm_node::module::traits::ModuleError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 /// Request to send a packet through the mesh
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,7 +122,7 @@ impl ModuleAPI for MeshModuleAPI {
                     )));
                 }
                 let req: SendPacketRequest = bincode::deserialize(params)
-                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
+                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
 
                 // Get node ID from manager
                 let node_id = self.get_node_id();
@@ -191,7 +191,7 @@ impl ModuleAPI for MeshModuleAPI {
                     )));
                 }
                 let req: DiscoverRouteRequest = bincode::deserialize(params)
-                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
+                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
 
                 let start = std::time::Instant::now();
 
@@ -200,7 +200,7 @@ impl ModuleAPI for MeshModuleAPI {
                     .discover_route(req.destination)
                     .await
                     .map_err(|e| {
-                        ModuleError::OperationError(format!("Route discovery failed: {}", e))
+                        ModuleError::OperationError(format!("Route discovery failed: {e}"))
                     })?;
 
                 let discovery_time = start.elapsed().as_millis() as u64;
@@ -218,6 +218,7 @@ impl ModuleAPI for MeshModuleAPI {
             }
 
             "register_protocol_handler" => {
+                // Deprecated: prefer MeshPacketReceived events + MeshAppTransport.
                 if params.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
                     return Err(ModuleError::OperationError(format!(
                         "Request too large: {} bytes (max: {} bytes)",
@@ -226,7 +227,7 @@ impl ModuleAPI for MeshModuleAPI {
                     )));
                 }
                 let req: RegisterProtocolRequest = bincode::deserialize(params)
-                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {}", e)))?;
+                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
 
                 let mut handlers = self.protocol_handlers.write().await;
                 handlers.insert(
@@ -276,9 +277,52 @@ impl ModuleAPI for MeshModuleAPI {
                 Ok(bincode::serialize(&node_id)?)
             }
 
+            "handle_mesh_packet" => {
+                let (packet_data, peer_addr): (Vec<u8>, String) =
+                    bincode::deserialize(params).map_err(|e| {
+                        ModuleError::OperationError(format!("Invalid request: {e}"))
+                    })?;
+                self.manager
+                    .handle_mesh_packet_received(&packet_data, &peer_addr)
+                    .await
+                    .map_err(|e| ModuleError::OperationError(e.to_string()))?;
+                Ok(bincode::serialize(&true)?)
+            }
+
+            "quote_route_fee" => {
+                #[derive(Deserialize)]
+                struct QuoteRequest {
+                    destination: NodeId,
+                    base_fee_sats: u64,
+                }
+                let req: QuoteRequest = bincode::deserialize(params).map_err(|e| {
+                    ModuleError::OperationError(format!("Invalid request: {e}"))
+                })?;
+                let fee = self
+                    .manager
+                    .quote_route_fee_sats(req.destination, req.base_fee_sats);
+                Ok(bincode::serialize(&fee)?)
+            }
+
+            "poll_local_deliveries" => {
+                #[derive(Deserialize)]
+                struct PollRequest {
+                    protocol_id: Option<String>,
+                    max_packets: Option<usize>,
+                }
+                let req: PollRequest = bincode::deserialize(params).map_err(|e| {
+                    ModuleError::OperationError(format!("Invalid poll request: {e}"))
+                })?;
+                let max = req.max_packets.unwrap_or(16);
+                let deliveries = self
+                    .manager
+                    .poll_local_deliveries(req.protocol_id.as_deref(), max)
+                    .await;
+                Ok(bincode::serialize(&deliveries)?)
+            }
+
             _ => Err(ModuleError::OperationError(format!(
-                "Unknown method: {}",
-                method
+                "Unknown method: {method}"
             ))),
         }
     }
@@ -293,6 +337,9 @@ impl ModuleAPI for MeshModuleAPI {
             "get_route_stats".to_string(),
             "get_network_stats".to_string(),
             "get_node_id".to_string(),
+            "handle_mesh_packet".to_string(),
+            "quote_route_fee".to_string(),
+            "poll_local_deliveries".to_string(),
         ]
     }
 

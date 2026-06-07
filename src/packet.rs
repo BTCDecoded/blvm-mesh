@@ -117,8 +117,7 @@ impl MeshPacket {
         let size = self.serialized_size();
         if size > MAX_PACKET_SIZE {
             return Err(format!(
-                "Packet size exceeds maximum: {} > {}",
-                size, MAX_PACKET_SIZE
+                "Packet size exceeds maximum: {size} > {MAX_PACKET_SIZE}"
             ));
         }
 
@@ -137,10 +136,8 @@ impl MeshPacket {
             return Err("Route must end with destination node".to_string());
         }
 
-        // Check payment proof for paid packets
-        if self.packet_type == PacketType::Paid && self.payment_proof.is_none() {
-            return Err("Paid packets require payment proof".to_string());
-        }
+        // Payment proof is enforced by routing policy in MeshManager::route_packet,
+        // not here — allows Paid packets without proof in open mode.
 
         Ok(())
     }
@@ -156,14 +153,14 @@ impl MeshPacket {
         let mut size = 82;
         size += self.route.len() * 32;
 
-        if let Some(ref proof) = self.payment_proof {
+        if self.payment_proof.is_some() {
             // Estimate payment proof size (Lightning: ~500 bytes, CTV: ~200 bytes)
             size += 500; // Conservative estimate
         }
 
         size += self.payload.len();
 
-        if let Some(ref metadata) = self.metadata {
+        if self.metadata.is_some() {
             // Estimate metadata size
             size += 100; // Conservative estimate
         }

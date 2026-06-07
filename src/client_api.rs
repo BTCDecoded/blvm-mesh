@@ -3,11 +3,13 @@
 //! Provides a convenient API for submodules to call blvm-mesh ModuleAPI via IPC.
 
 use crate::api::{
-    DiscoverRouteRequest, DiscoverRouteResponse, RegisterProtocolRequest, RegisterProtocolResponse,
+    DiscoverRouteRequest, DiscoverRouteResponse, PeerEntry, RegisterProtocolRequest,
     SendPacketRequest, SendPacketResponse,
 };
+use crate::app_transport::MeshAppTransport;
 use crate::payment_proof::PaymentProof;
 use crate::routing::NodeId;
+use async_trait::async_trait;
 use blvm_node::module::traits::{ModuleError, NodeAPI};
 use std::sync::Arc;
 
@@ -44,7 +46,7 @@ impl MeshClient {
     /// Send a packet through the mesh
     pub async fn send_packet(
         &self,
-        caller_module_id: &str,
+        _caller_module_id: &str,
         destination: NodeId,
         payload: Vec<u8>,
         payment_proof: Option<PaymentProof>,
@@ -59,7 +61,7 @@ impl MeshClient {
         };
 
         let params = bincode::serialize(&request)
-            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {}", e)))?;
+            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {e}")))?;
 
         let response = self
             .node_api
@@ -74,7 +76,7 @@ impl MeshClient {
             )));
         }
         let result: SendPacketResponse = bincode::deserialize(&response)
-            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {e}")))?;
 
         Ok(result)
     }
@@ -82,7 +84,7 @@ impl MeshClient {
     /// Discover a route to a destination
     pub async fn discover_route(
         &self,
-        caller_module_id: &str,
+        _caller_module_id: &str,
         destination: NodeId,
         max_hops: Option<u8>,
     ) -> Result<DiscoverRouteResponse, ModuleError> {
@@ -93,7 +95,7 @@ impl MeshClient {
         };
 
         let params = bincode::serialize(&request)
-            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {}", e)))?;
+            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {e}")))?;
 
         let response = self
             .node_api
@@ -108,15 +110,19 @@ impl MeshClient {
             )));
         }
         let result: DiscoverRouteResponse = bincode::deserialize(&response)
-            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {e}")))?;
 
         Ok(result)
     }
 
     /// Register a protocol handler
+    ///
+    /// **Deprecated:** subscribe to `MeshPacketReceived` and filter on
+    /// `packet.metadata.protocol` instead. Kept for existing submodules.
+    #[deprecated(note = "use MeshPacketReceived events and MeshAppTransport instead")]
     pub async fn register_protocol_handler(
         &self,
-        caller_module_id: &str,
+        _caller_module_id: &str,
         protocol_id: String,
         handler_method: String,
     ) -> Result<(), ModuleError> {
@@ -126,7 +132,7 @@ impl MeshClient {
         };
 
         let params = bincode::serialize(&request)
-            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {}", e)))?;
+            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {e}")))?;
 
         self.node_api
             .call_module(
@@ -156,8 +162,84 @@ impl MeshClient {
             )));
         }
         let node_id: NodeId = bincode::deserialize(&response)
-            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {}", e)))?;
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {e}")))?;
 
         Ok(node_id)
+    }
+
+    /// List direct mesh peers.
+    pub async fn get_peer_list(&self) -> Result<Vec<PeerEntry>, ModuleError> {
+        let response = self
+            .node_api
+            .call_module(
+                Some(&self.mesh_module_id),
+                "get_peer_list",
+                Vec::new(),
+            )
+            .await?;
+        bincode::deserialize(&response)
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {e}")))
+    }
+
+    /// Estimate route fee in satoshis.
+    pub async fn quote_route_fee(
+        &self,
+        destination: NodeId,
+        base_fee_sats: u64,
+    ) -> Result<u64, ModuleError> {
+        #[derive(serde::Serialize)]
+        struct QuoteRequest {
+            destination: NodeId,
+            base_fee_sats: u64,
+        }
+        let params = bincode::serialize(&QuoteRequest {
+            destination,
+            base_fee_sats,
+        })
+        .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {e}")))?;
+        let response = self
+            .node_api
+            .call_module(Some(&self.mesh_module_id), "quote_route_fee", params)
+            .await?;
+        bincode::deserialize(&response)
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {e}")))
+    }
+}
+
+#[async_trait]
+impl MeshAppTransport for MeshClient {
+    async fn send_packet(
+        &self,
+        destination: NodeId,
+        payload: Vec<u8>,
+        payment_proof: Option<PaymentProof>,
+        protocol_id: Option<String>,
+    ) -> Result<SendPacketResponse, ModuleError> {
+        self.send_packet("", destination, payload, payment_proof, protocol_id)
+            .await
+    }
+
+    async fn discover_route(
+        &self,
+        destination: NodeId,
+        max_hops: Option<u8>,
+    ) -> Result<DiscoverRouteResponse, ModuleError> {
+        self.discover_route("", destination, max_hops).await
+    }
+
+    async fn get_node_id(&self) -> Result<NodeId, ModuleError> {
+        MeshClient::get_node_id(self).await
+    }
+
+    async fn get_peer_list(&self) -> Result<Vec<PeerEntry>, ModuleError> {
+        MeshClient::get_peer_list(self).await
+    }
+
+    async fn quote_route_fee(
+        &self,
+        destination: NodeId,
+        base_fee_sats: u64,
+    ) -> Result<u64, ModuleError> {
+        MeshClient::quote_route_fee(self, destination, base_fee_sats).await
     }
 }

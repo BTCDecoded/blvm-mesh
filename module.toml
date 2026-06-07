@@ -7,6 +7,10 @@ entry_point = "blvm-mesh"
 capabilities = [
     "read_blockchain",
     "subscribe_events",
+    "register_module_api",
+    "network_access",
+    "publish_events",
+    "read_payment",
 ]
 
 # CI fills url/sha256 on release — root `blvm-mesh` binary; see `modules/*/module.toml` for workspace members.

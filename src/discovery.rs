@@ -8,8 +8,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tokio::sync::{oneshot, RwLock};
+use tracing::{debug, info};
+
+/// Outcome of starting route discovery.
+pub enum DiscoveryStart {
+    /// Route already in local table.
+    Found(Vec<NodeId>),
+    /// Broadcast required; wait on receiver for `request_id`.
+    Pending {
+        request_id: u64,
+        message: DiscoveryMessage,
+    },
+}
 
 /// Route discovery message types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +60,8 @@ pub struct RouteAdvertisementEntry {
 pub struct RouteDiscovery {
     /// Pending route requests (request_id -> RouteRequest)
     pending_requests: Arc<RwLock<HashMap<u64, PendingRequest>>>,
+    /// Waiters for in-flight discovery (request_id -> oneshot)
+    waiters: Arc<RwLock<HashMap<u64, oneshot::Sender<Vec<NodeId>>>>>,
     /// Request ID counter
     request_id_counter: Arc<RwLock<u64>>,
     /// Routing table reference
@@ -60,6 +73,7 @@ pub struct RouteDiscovery {
 }
 
 /// Pending route request
+#[allow(dead_code)]
 struct PendingRequest {
     destination: NodeId,
     source: NodeId,
@@ -73,11 +87,23 @@ impl RouteDiscovery {
     pub fn new(routing_table: Arc<RoutingTable>, max_hops: u8, timeout_seconds: u64) -> Self {
         Self {
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
+            waiters: Arc::new(RwLock::new(HashMap::new())),
             request_id_counter: Arc::new(RwLock::new(0)),
             routing_table,
             max_hops,
             timeout_seconds,
         }
+    }
+
+    pub fn timeout_seconds(&self) -> u64 {
+        self.timeout_seconds
+    }
+
+    /// Register a waiter before broadcasting a pending discovery request.
+    pub async fn register_waiter(&self, request_id: u64) -> oneshot::Receiver<Vec<NodeId>> {
+        let (tx, rx) = oneshot::channel();
+        self.waiters.write().await.insert(request_id, tx);
+        rx
     }
 
     /// Generate a new request ID
@@ -87,46 +113,30 @@ impl RouteDiscovery {
         *counter
     }
 
-    /// Discover route to destination
-    ///
-    /// Returns route if found, None if not found or timeout.
-    pub async fn discover_route(
+    /// Begin route discovery — returns immediately-found route or a pending request.
+    pub async fn begin_discovery(
         &self,
         destination: NodeId,
         source: NodeId,
-    ) -> Result<Option<Vec<NodeId>>, MeshError> {
-        // Check if we already have a route
+    ) -> Result<DiscoveryStart, MeshError> {
         if let Some(route) = self.routing_table.find_route(&destination) {
-            return Ok(Some(route));
+            return Ok(DiscoveryStart::Found(route));
         }
 
-        // Check if destination is a direct peer (lock-free with DashMap)
         if let Some(entry) = self.routing_table.get_route(&destination) {
             if entry.direct_address.is_some() {
-                // Direct peer - return direct route
-                return Ok(Some(vec![source, destination]));
+                return Ok(DiscoveryStart::Found(vec![source, destination]));
             }
         }
 
-        // Create route request
         let request_id = self.next_request_id().await;
-        let request = DiscoveryMessage::RouteRequest {
+        let message = DiscoveryMessage::RouteRequest {
             destination,
             source,
             request_id,
             max_hops: self.max_hops,
         };
 
-        // Broadcast route request to neighbors
-        // Note: Actual broadcasting would be done by the caller using the network layer
-        // This method prepares the request, and network integration handles the broadcast
-        // For now, we'll just return None (route discovery not yet implemented)
-        warn!(
-            "Route discovery not yet implemented: destination={:x?}",
-            &destination[..8]
-        );
-
-        // Store pending request
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -144,7 +154,22 @@ impl RouteDiscovery {
             },
         );
 
-        Ok(None)
+        Ok(DiscoveryStart::Pending {
+            request_id,
+            message,
+        })
+    }
+
+    /// Legacy API — table lookup only (network discovery via `MeshManager::discover_route`).
+    pub async fn discover_route(
+        &self,
+        destination: NodeId,
+        source: NodeId,
+    ) -> Result<Option<Vec<NodeId>>, MeshError> {
+        match self.begin_discovery(destination, source).await? {
+            DiscoveryStart::Found(route) => Ok(Some(route)),
+            DiscoveryStart::Pending { .. } => Ok(None),
+        }
     }
 
     /// Discover multiple routes in parallel (batch operation)
@@ -182,63 +207,51 @@ impl RouteDiscovery {
     pub async fn handle_route_request(
         &self,
         request: &DiscoveryMessage,
-        from_node: NodeId,
+        local_node_id: NodeId,
     ) -> Result<Option<DiscoveryMessage>, MeshError> {
         match request {
             DiscoveryMessage::RouteRequest {
                 destination,
                 source,
                 request_id,
-                max_hops,
+                max_hops: _,
             } => {
-                // Check if we have a route to destination (lock-free with DashMap)
-                if let Some(route) = self.routing_table.find_route(destination) {
-                    // We have a route - send response
+                if *destination == local_node_id {
+                    let response = DiscoveryMessage::RouteResponse {
+                        destination: *destination,
+                        source: *source,
+                        request_id: *request_id,
+                        route: vec![*source, local_node_id],
+                        cost: 0,
+                    };
+                    return Ok(Some(response));
+                }
+
+                if let Some(mut route) = self.routing_table.find_route(destination) {
+                    if route.first() != Some(source) && !route.contains(source) {
+                        route.insert(0, *source);
+                    }
                     let response = DiscoveryMessage::RouteResponse {
                         destination: *destination,
                         source: *source,
                         request_id: *request_id,
                         route: route.clone(),
-                        cost: route.len() as u64 * 100, // Simple cost calculation
+                        cost: route.len() as u64 * 10,
                     };
                     return Ok(Some(response));
                 }
 
-                // Check if we are the destination
-                // Note: This method should receive the node's actual node_id as a parameter
-                // For now, we check if destination matches any route in our routing table
-                // (which would indicate we know about this node, possibly ourselves)
-                // The caller should pass the actual node_id to properly check if we are the destination
-                // For now, if we have a direct route to the destination, we might be the destination
-                // In production, the caller should pass the actual node_id to compare
-                if let Some(route) = self.routing_table.get_route(destination) {
-                    // We have a route to this destination
-                    // If it's a direct route (only one hop), we might be the destination
-                    // For now, we'll assume if we have a direct route, we can respond
-                    // The caller should verify we are actually the destination
-                    if route.route_path.len() == 1 {
-                        // Direct route - might be ourselves
-                        // In production, compare with actual node_id
+                if let Some(entry) = self.routing_table.get_route(destination) {
+                    if entry.direct_address.is_some() {
                         let response = DiscoveryMessage::RouteResponse {
                             destination: *destination,
                             source: *source,
                             request_id: *request_id,
-                            route: vec![*source, *destination],
-                            cost: 0, // Direct route has no cost
+                            route: vec![*source, local_node_id, *destination],
+                            cost: 10,
                         };
                         return Ok(Some(response));
                     }
-                }
-
-                // Forward request if we haven't exceeded max hops
-                if *max_hops > 0 {
-                    // Forward request to neighbors
-                    // Note: Actual forwarding would be done by the caller using network layer
-                    debug!(
-                        "Forwarding route request: destination={:x?}, hops_remaining={}",
-                        &destination[..8],
-                        max_hops - 1
-                    );
                 }
 
                 Ok(None)
@@ -256,7 +269,7 @@ impl RouteDiscovery {
         match response {
             DiscoveryMessage::RouteResponse {
                 destination,
-                source,
+                source: _,
                 request_id,
                 route,
                 cost,
@@ -293,8 +306,12 @@ impl RouteDiscovery {
                         cost
                     );
 
-                    // Remove pending request
                     pending.remove(request_id);
+
+                    let mut waiters = self.waiters.write().await;
+                    if let Some(tx) = waiters.remove(request_id) {
+                        let _ = tx.send(route.clone());
+                    }
                 }
 
                 Ok(())
@@ -307,7 +324,7 @@ impl RouteDiscovery {
     pub async fn handle_route_advertisement(
         &self,
         advertisement: &DiscoveryMessage,
-        from_node: NodeId,
+        _from_node: NodeId,
     ) -> Result<(), MeshError> {
         match advertisement {
             DiscoveryMessage::RouteAdvertisement { routes, source } => {

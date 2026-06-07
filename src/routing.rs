@@ -3,12 +3,11 @@
 //! Manages routing table for mesh networking, including route discovery,
 //! fee calculation, and multi-hop routing.
 
-use crate::error::MeshError;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 /// Node ID (32 bytes, SHA256 of public key)
 pub type NodeId = [u8; 32];
@@ -226,6 +225,17 @@ impl RoutingTable {
                 (node_id, addr)
             })
             .collect()
+    }
+
+    /// Resolve a peer's node id from its socket address (if known).
+    pub fn node_id_for_address(&self, addr: &str) -> Option<NodeId> {
+        let addr_bytes = addr.as_bytes();
+        for entry in self.direct_peers.iter() {
+            if entry.value().as_slice() == addr_bytes {
+                return Some(*entry.key());
+            }
+        }
+        None
     }
 
     /// List all routes (node_id, direct/multi-hop, hops, cost)

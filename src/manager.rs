@@ -1,25 +1,26 @@
 //! Mesh manager - main coordination logic
 
-const MESH_STATE_TREE: &str = "mesh_state";
-
-use crate::discovery::RouteDiscovery;
+use crate::config::MeshConfig;
+use crate::discovery::{DiscoveryMessage, DiscoveryStart, RouteDiscovery};
 use crate::error::MeshError;
-use crate::network::{deserialize_mesh_packet, extract_mesh_packet, serialize_mesh_packet};
-use crate::packet::MeshPacket;
-use crate::payment_proof::PaymentProof;
+use crate::identity::{MeshIdentity, PROTOCOL_DISCOVERY, PROTOCOL_HELLO};
+use crate::network::{deserialize_mesh_packet, serialize_mesh_packet};
+use crate::packet::{MeshPacket, PacketMetadata, PacketType};
+use crate::packet_sequence::PacketSequenceGuard;
+use crate::rate_limit::RateLimiter;
 use crate::replay::{ReplayPrevention, ReplayStats};
-use crate::routing::{NodeId, RoutingStats, RoutingTable};
+use crate::routing::{NodeId, RoutingEntry, RoutingStats, RoutingTable};
 use crate::routing_policy::{MeshMode, RoutingPolicyEngine};
 use crate::verifier::PaymentVerifier;
-use blvm_node::module::ipc::protocol::EventPayload;
-use blvm_node::module::ipc::protocol::ModuleMessage;
-use blvm_node::module::traits::NodeAPI;
-use blvm_node::module::EventType;
+use blvm_node::module::ipc::protocol::{EventPayload, ModuleMessage};
+use blvm_node::module::traits::{EventType, NodeAPI};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, warn};
 
 /// Mesh statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +30,16 @@ pub struct MeshStats {
     pub routing: RoutingStats,
     pub replay: ReplayStats,
 }
+
+/// App payload delivered locally (for BitSov and other mesh consumers).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalDelivery {
+    pub protocol_id: String,
+    pub payload: Vec<u8>,
+    pub source: NodeId,
+}
+
+const LOCAL_DELIVERY_QUEUE_CAP: usize = 256;
 
 /// Mesh manager coordinates all mesh operations
 pub struct MeshManager {
@@ -44,10 +55,20 @@ pub struct MeshManager {
     routing_table: Arc<RoutingTable>,
     /// Route discovery manager
     route_discovery: Arc<RouteDiscovery>,
-    /// Node ID (32 bytes, SHA256 of node's public key)
+    /// Ed25519 identity (D-1)
+    identity: Arc<MeshIdentity>,
+    /// Node ID (32-byte Ed25519 verifying key)
     node_id: NodeId,
     /// Node API for querying node state
     node_api: Arc<dyn NodeAPI>,
+    /// Monotonic outbound packet sequence (assigned at send).
+    outbound_sequence: AtomicU64,
+    /// Per-peer ingress rate limiter.
+    rate_limiter: Arc<RateLimiter>,
+    /// Per-source ingress sequence guard.
+    packet_sequences: Arc<PacketSequenceGuard>,
+    /// Locally delivered app payloads awaiting external poll (e.g. BitSov UKM ingress).
+    local_delivery_queue: Arc<Mutex<Vec<LocalDelivery>>>,
 }
 
 impl MeshManager {
@@ -55,6 +76,7 @@ impl MeshManager {
     pub async fn new(
         ctx: &blvm_node::module::traits::ModuleContext,
         node_api: Arc<dyn NodeAPI>,
+        _config: Option<&MeshConfig>,
     ) -> Result<Self, MeshError> {
         let enabled = ctx.get_config_or("mesh.enabled", "false") == "true";
         let mode_str = ctx.get_config_or("mesh.mode", "payment_gated");
@@ -80,16 +102,24 @@ impl MeshManager {
             DISCOVERY_TIMEOUT_SECONDS,
         ));
 
-        // Get or generate node ID
-        // Try to load from module DB first, otherwise generate and store it
         let data_dir = std::path::Path::new(&ctx.data_dir);
-        let node_id = Self::get_or_generate_node_id(node_api.as_ref(), data_dir).await;
+        let identity = Arc::new(MeshIdentity::load_or_create(data_dir)?);
+        let node_id = identity.node_id();
+
+        let rate_limit = _config
+            .map(|c| c.rate_limit_per_minute)
+            .unwrap_or_else(|| {
+                ctx.get_config_or("mesh.rate_limit_per_minute", "120")
+                    .parse::<u32>()
+                    .unwrap_or(120)
+            });
+        let rate_limiter = Arc::new(RateLimiter::new(rate_limit, 60));
 
         debug!(
-            "Initializing mesh manager: enabled={}, mode={:?}, node_id={:x?}",
+            "Initializing mesh manager: enabled={}, mode={:?}, node_id={}",
             enabled,
             mode,
-            &node_id[..8]
+            hex::encode(&node_id[..8])
         );
 
         Ok(Self {
@@ -99,21 +129,120 @@ impl MeshManager {
             replay_prevention,
             routing_table,
             route_discovery,
+            identity,
             node_id,
             node_api,
+            outbound_sequence: AtomicU64::new(1),
+            rate_limiter,
+            packet_sequences: Arc::new(PacketSequenceGuard::new()),
+            local_delivery_queue: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
-    /// Determine routing policy for a message
+    /// Drain locally delivered app packets (optionally filtered by protocol id).
+    pub async fn poll_local_deliveries(
+        &self,
+        protocol_filter: Option<&str>,
+        max: usize,
+    ) -> Vec<LocalDelivery> {
+        let max = max.clamp(1, 64);
+        let mut queue = self.local_delivery_queue.lock().await;
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < queue.len() && out.len() < max {
+            if protocol_filter
+                .map(|p| queue[i].protocol_id == p)
+                .unwrap_or(true)
+            {
+                out.push(queue.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    async fn enqueue_local_delivery(
+        &self,
+        protocol_id: &str,
+        payload: Vec<u8>,
+        source: NodeId,
+    ) {
+        let mut queue = self.local_delivery_queue.lock().await;
+        if queue.len() >= LOCAL_DELIVERY_QUEUE_CAP {
+            warn!(
+                protocol_id,
+                cap = LOCAL_DELIVERY_QUEUE_CAP,
+                "local delivery queue full — dropping oldest"
+            );
+            queue.remove(0);
+        }
+        queue.push(LocalDelivery {
+            protocol_id: protocol_id.to_string(),
+            payload,
+            source,
+        });
+    }
+
+    /// Assign the next monotonic sequence to an outbound packet from this node.
+    pub fn prepare_outbound_packet(&self, packet: &mut MeshPacket) {
+        if packet.source == self.node_id {
+            packet.sequence = self.outbound_sequence.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Next outbound sequence without mutating a packet (for tests).
+    pub fn next_sequence(&self) -> u64 {
+        self.outbound_sequence.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Load static peers from config (G5).
+    pub fn load_configured_peers(&self, config: &MeshConfig) -> Result<(), MeshError> {
+        for peer in &config.peers {
+            let node_id = peer
+                .node_id_hex
+                .as_ref()
+                .map(|h| Self::parse_node_id_hex(h))
+                .transpose()?;
+            self.add_peer_with_id(peer.address.trim(), node_id)?;
+        }
+        for addr in &config.peer_list {
+            let addr = addr.trim();
+            if !addr.is_empty() {
+                self.add_peer(addr)?;
+            }
+        }
+        for addr in &config.bootstrap_nodes {
+            let addr = addr.trim();
+            if !addr.is_empty() {
+                self.add_peer(addr)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Determine routing policy for raw wire bytes (payload sniffing / interop).
     pub fn determine_routing_policy(&self, message: &[u8]) -> crate::routing_policy::RoutingPolicy {
         if !self.enabled {
-            // If mesh is disabled, all messages should use standard routing
             return crate::routing_policy::RoutingPolicy::Free;
         }
 
         let policy = self.routing_policy.read().unwrap();
         let protocol = policy.detect_protocol(message);
         policy.determine_policy(protocol)
+    }
+
+    /// Determine routing policy for a mesh packet (uses `packet_type`, G7).
+    pub fn determine_routing_policy_for_packet(
+        &self,
+        packet: &MeshPacket,
+    ) -> crate::routing_policy::RoutingPolicy {
+        if !self.enabled {
+            return crate::routing_policy::RoutingPolicy::Free;
+        }
+
+        let policy = self.routing_policy.read().unwrap();
+        policy.determine_policy_for_packet_type(packet.packet_type.clone())
     }
 
     /// Start the mesh manager
@@ -163,6 +292,11 @@ impl MeshManager {
     /// 4. Checks replay prevention
     /// 5. Routes the packet
     pub async fn route_packet(&self, packet: &MeshPacket) -> Result<(), MeshError> {
+        let mut packet = packet.clone();
+        if packet.source == self.node_id && packet.sequence == 0 {
+            self.prepare_outbound_packet(&mut packet);
+        }
+
         if !self.enabled {
             return Err(MeshError::MeshDisabled("Mesh is disabled".to_string()));
         }
@@ -180,10 +314,10 @@ impl MeshManager {
         }
 
         // Validate packet structure
-        packet.validate().map_err(|e| MeshError::InvalidPacket(e))?;
+        packet.validate().map_err(MeshError::InvalidPacket)?;
 
-        // Determine routing policy
-        let policy = self.determine_routing_policy(&packet.payload);
+        // Determine routing policy from packet type (mesh-originated packets)
+        let policy = self.determine_routing_policy_for_packet(&packet);
 
         // Check if payment is required
         if policy == crate::routing_policy::RoutingPolicy::PaymentRequired {
@@ -193,7 +327,7 @@ impl MeshManager {
                 let replay = self.replay_prevention.lock().await;
                 replay
                     .check_replay(proof, &packet.source, packet.sequence)
-                    .map_err(|e| MeshError::ReplayDetected(e))?;
+                    .map_err(MeshError::ReplayDetected)?;
 
                 // Verify payment
                 let verification = self
@@ -223,7 +357,7 @@ impl MeshManager {
         }
 
         // Route the packet
-        self.forward_packet(packet).await?;
+        self.forward_packet(&packet).await?;
 
         Ok(())
     }
@@ -248,7 +382,7 @@ impl MeshManager {
         }
 
         // Use cached node ID (computed at init)
-        let my_node_id = self.node_id;
+        let _my_node_id = self.node_id;
 
         // Find route to destination
         let mut route = self.routing_table.find_route(&packet.destination);
@@ -422,31 +556,92 @@ impl MeshManager {
         self.node_api
             .send_mesh_packet_to_peer(peer_address, packet_data)
             .await
-            .map_err(|e| MeshError::NetworkError(format!("Failed to send mesh packet: {}", e)))?;
+            .map_err(|e| MeshError::NetworkError(format!("Failed to send mesh packet: {e}")))?;
 
         debug!("Mesh packet sent successfully");
         Ok(())
     }
 
+    /// Handle raw mesh packet bytes from `MeshPacketReceived` event.
+    pub async fn handle_mesh_packet_received(
+        &self,
+        packet_data: &[u8],
+        peer_addr: &str,
+    ) -> Result<(), MeshError> {
+        if packet_data.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(MeshError::InvalidPacket(format!(
+                "Packet too large: {} bytes",
+                packet_data.len()
+            )));
+        }
+        let packet = deserialize_mesh_packet(packet_data)?;
+        self.handle_incoming_packet(&packet, Some(peer_addr))
+            .await
+    }
+
     /// Handle an incoming mesh packet
-    pub async fn handle_incoming_packet(&self, packet: &MeshPacket) -> Result<(), MeshError> {
+    pub async fn handle_incoming_packet(
+        &self,
+        packet: &MeshPacket,
+        peer_addr: Option<&str>,
+    ) -> Result<(), MeshError> {
         if !self.enabled {
             return Err(MeshError::MeshDisabled("Mesh is disabled".to_string()));
         }
 
-        // Validate packet
-        packet.validate().map_err(|e| MeshError::InvalidPacket(e))?;
+        packet.validate().map_err(MeshError::InvalidPacket)?;
+
+        let rate_key = peer_addr
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| hex::encode(&packet.source[..8]));
+        self.rate_limiter
+            .check_and_record(&rate_key)
+            .map_err(MeshError::RateLimited)?;
+
+        if let Some(protocol) = packet
+            .metadata
+            .as_ref()
+            .and_then(|m| m.protocol.as_deref())
+        {
+            match protocol {
+                PROTOCOL_HELLO => {
+                    return self
+                        .handle_hello_packet(packet, peer_addr.unwrap_or(""))
+                        .await;
+                }
+                PROTOCOL_DISCOVERY => {
+                    return self.handle_discovery_packet(packet).await;
+                }
+                _ => {}
+            }
+        }
+
+        self.packet_sequences
+            .check_and_record(&packet.source, packet.sequence)
+            .map_err(MeshError::ReplayDetected)?;
+
+        if !self.verify_forward_payment(packet).await? {
+            return Err(MeshError::PaymentVerification(
+                "Payment proof required for paid forward".to_string(),
+            ));
+        }
 
         // Check if packet is for this node
         if packet.is_for_me(&self.node_id) {
-            // Packet is for this node - deliver it
+            if let Some(protocol) = packet
+                .metadata
+                .as_ref()
+                .and_then(|m| m.protocol.as_deref())
+            {
+                if protocol != PROTOCOL_HELLO && protocol != PROTOCOL_DISCOVERY {
+                    self.enqueue_local_delivery(protocol, packet.payload.clone(), packet.source)
+                        .await;
+                }
+            }
             debug!(
                 "Packet delivered to local node: source={:x?}",
                 &packet.source[..8]
             );
-            // Deliver packet to application layer
-            // Note: Application layer delivery would be handled by the node's network layer
-            // This module processes mesh packets and forwards them to the next hop
             debug!(
                 "Delivered mesh packet to destination: {:x?}",
                 &packet.destination[..8]
@@ -454,17 +649,22 @@ impl MeshManager {
             return Ok(());
         }
 
-        // Check if packet should be forwarded
-        if packet.should_forward(&self.node_id) {
-            // Forward packet to next hop
+        // Forward if we're on the packet route or have a table route to the destination.
+        let can_reach = packet.should_forward(&self.node_id)
+            || self.routing_table.find_route(&packet.destination).is_some()
+            || self
+                .routing_table
+                .get_route(&packet.destination)
+                .is_some();
+
+        if can_reach {
             debug!(
                 "Forwarding packet: destination={:x?}",
                 &packet.destination[..8]
             );
             self.forward_packet(packet).await?;
         } else {
-            // Packet is not for us and we're not in the route - drop it
-            warn!("Dropping packet: not for us and not in route");
+            warn!("Dropping packet: not for us and no route to destination");
         }
 
         Ok(())
@@ -484,39 +684,56 @@ impl MeshManager {
             ModuleMessage::Event(event_msg) => {
                 match event_msg.event_type {
                     EventType::PeerConnected => {
-                        debug!("Peer connected event received");
                         if let EventPayload::PeerConnected {
                             peer_addr,
                             transport_type,
+                            peer_node_id,
                             ..
                         } = &event_msg.payload
                         {
-                            // Derive node ID from peer address (simplified - in production would use peer's public key)
-                            let peer_node_id = Self::derive_node_id_from_address(peer_addr);
+                            if let Some(bytes) = peer_node_id
+                                .as_ref()
+                                .filter(|b| b.len() == 32)
+                            {
+                                let mut id = [0u8; 32];
+                                id.copy_from_slice(bytes);
+                                self.routing_table.add_direct_peer(
+                                    id,
+                                    peer_addr.as_bytes().to_vec(),
+                                );
+                                info!(
+                                    "Peer identity updated: addr={}, node_id={:x?}",
+                                    peer_addr,
+                                    &id[..8]
+                                );
+                                return Ok(());
+                            }
 
-                            // Convert address string to bytes (simplified)
-                            let address_bytes = peer_addr.as_bytes().to_vec();
-
-                            // Add to routing table as direct peer
-                            self.routing_table
-                                .add_direct_peer(peer_node_id, address_bytes);
+                            let derived = Self::derive_node_id_from_address(peer_addr);
+                            self.routing_table.add_direct_peer(
+                                derived,
+                                peer_addr.as_bytes().to_vec(),
+                            );
 
                             info!(
-                                "Added peer to routing table: node_id={:x?}, addr={}, transport={}",
-                                &peer_node_id[..8],
-                                peer_addr,
-                                transport_type
+                                "Peer connected: addr={}, transport={}",
+                                peer_addr, transport_type
                             );
+
+                            if let Err(e) = self.send_hello_to_peer(peer_addr).await {
+                                warn!("Failed to send mesh hello to {}: {}", peer_addr, e);
+                            }
                         }
                     }
                     EventType::PeerDisconnected => {
                         debug!("Peer disconnected event received");
                         if let EventPayload::PeerDisconnected { peer_addr, .. } = &event_msg.payload
                         {
-                            // Derive node ID from peer address
-                            let peer_node_id = Self::derive_node_id_from_address(peer_addr);
+                            let peer_node_id = self
+                                .routing_table
+                                .node_id_for_address(peer_addr)
+                                .unwrap_or_else(|| Self::derive_node_id_from_address(peer_addr));
 
-                            // Remove from routing table
                             self.routing_table.remove_direct_peer(&peer_node_id);
 
                             info!(
@@ -564,17 +781,37 @@ impl MeshManager {
         self.routing_table.list_direct_peers()
     }
 
-    /// Add a direct peer by address (node_id derived from address)
-    pub fn add_peer(&self, addr: &str) -> Result<(), MeshError> {
-        let node_id = Self::derive_node_id_from_address(addr);
+    /// Parse a 64-char hex NodeId.
+    pub fn parse_node_id_hex(hex_str: &str) -> Result<NodeId, MeshError> {
+        let hex_str = hex_str.trim().trim_start_matches("0x");
+        if hex_str.len() != 64 || !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(MeshError::InvalidPacket(format!(
+                "NodeId must be 64 hex chars, got: {hex_str}"
+            )));
+        }
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| MeshError::InvalidPacket(format!("Invalid node_id hex: {e}")))?;
+        let mut node_id = [0u8; 32];
+        node_id.copy_from_slice(&bytes);
+        Ok(node_id)
+    }
+
+    /// Add a direct peer; optional explicit node id (G13 / -1.7).
+    pub fn add_peer_with_id(&self, addr: &str, node_id: Option<NodeId>) -> Result<(), MeshError> {
+        let node_id = node_id.unwrap_or_else(|| Self::derive_node_id_from_address(addr));
         let address_bytes = addr.as_bytes().to_vec();
         self.routing_table.add_direct_peer(node_id, address_bytes);
         info!(
-            "Added peer via CLI: addr={}, node_id={:x?}",
+            "Added peer: addr={}, node_id={:x?}",
             addr,
             &node_id[..8]
         );
         Ok(())
+    }
+
+    /// Add a direct peer by address (node_id derived from address)
+    pub fn add_peer(&self, addr: &str) -> Result<(), MeshError> {
+        self.add_peer_with_id(addr, None)
     }
 
     /// Remove a direct peer by address (node_id derived from address)
@@ -615,95 +852,359 @@ impl MeshManager {
         self.node_id
     }
 
-    /// Discover route to destination (exposed for API)
+    /// Estimate routing fee in satoshis for a destination (direct or cached route).
+    pub fn quote_route_fee_sats(&self, destination: NodeId, base_fee_sats: u64) -> u64 {
+        if let Some(route) = self.routing_table.find_route(&destination) {
+            return self
+                .routing_table
+                .calculate_routing_fee(&route, base_fee_sats)
+                .total;
+        }
+        if self.routing_table.get_route(&destination).is_some() {
+            return base_fee_sats;
+        }
+        0
+    }
+
+    /// Test helper: install a multi-hop route in the local table.
+    pub fn install_route_for_test(&self, destination: NodeId, route_path: Vec<NodeId>) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let next_hop = route_path.get(1).copied();
+        let cost = route_path.len() as u64 * 10;
+        self.routing_table.add_route(RoutingEntry {
+            node_id: destination,
+            direct_address: None,
+            next_hop,
+            route_path,
+            route_cost: cost,
+            last_updated: now,
+            quality_score: 0.9,
+        });
+    }
+
+    /// Discover route to destination (network discovery when not cached).
     pub async fn discover_route(
         &self,
         destination: NodeId,
     ) -> Result<Option<Vec<NodeId>>, MeshError> {
-        self.route_discovery
-            .discover_route(destination, self.node_id)
-            .await
-            .map_err(|e| MeshError::NetworkError(format!("Route discovery failed: {}", e)))
-    }
-
-    /// Get or generate node ID
-    /// Tries to load from module DB first, otherwise generates and stores a new one
-    async fn get_or_generate_node_id(node_api: &dyn NodeAPI, data_dir: &std::path::Path) -> NodeId {
-        use sha2::{Digest, Sha256};
-
-        const STORAGE_KEY: &[u8] = b"mesh_config:node_id";
-
-        // Try to load from module DB
-        if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir) {
-            if let Ok(tree) = db.tree(MESH_STATE_TREE) {
-                if let Ok(Some(stored_id)) = tree.get(STORAGE_KEY) {
-                    if stored_id.len() == 32 {
-                        let mut node_id = [0u8; 32];
-                        node_id.copy_from_slice(&stored_id);
-                        return node_id;
+        match self
+            .route_discovery
+            .begin_discovery(destination, self.node_id)
+            .await?
+        {
+            DiscoveryStart::Found(route) => {
+                self.publish_route_discovered(&destination, &route).await;
+                Ok(Some(route))
+            }
+            DiscoveryStart::Pending {
+                request_id,
+                message,
+            } => {
+                let rx = self.route_discovery.register_waiter(request_id).await;
+                self.broadcast_discovery(&message).await?;
+                let timeout =
+                    std::time::Duration::from_secs(self.route_discovery.timeout_seconds());
+                match tokio::time::timeout(timeout, rx).await {
+                    Ok(Ok(route)) => {
+                        self.publish_route_discovered(&destination, &route).await;
+                        Ok(Some(route))
+                    }
+                    Ok(Err(_)) => {
+                        self.publish_route_failed(&destination, "discovery cancelled")
+                            .await;
+                        Ok(None)
+                    }
+                    Err(_) => {
+                        self.publish_route_failed(&destination, "discovery timeout")
+                            .await;
+                        Ok(None)
                     }
                 }
             }
         }
+    }
 
-        // Try to get node ID from network info (if available)
-        // First, try to get from network stats which might include node identity
-        let node_id = if let Ok(network_stats) = node_api.get_network_stats().await {
-            // Use network stats to create a more stable node ID
-            // In production, this would use the node's actual public key
-            // For now, create a deterministic ID from network characteristics
-            let mut id_data = Vec::new();
-            id_data.extend_from_slice(&network_stats.peer_count.to_le_bytes());
-            id_data.extend_from_slice(&network_stats.hash_rate.to_le_bytes());
+    async fn send_hello_to_peer(&self, peer_addr: &str) -> Result<(), MeshError> {
+        let temp_id = Self::derive_node_id_from_address(peer_addr);
+        let mut packet = MeshPacket::new(
+            PacketType::Paid,
+            self.node_id,
+            temp_id,
+            self.identity.hello_payload(),
+        );
+        packet.metadata = Some(PacketMetadata {
+            protocol: Some(PROTOCOL_HELLO.to_string()),
+            fields: std::collections::HashMap::new(),
+        });
+        let wire = serialize_mesh_packet(&packet)?;
+        self.send_mesh_packet(peer_addr.to_string(), wire).await
+    }
 
-            // Add chain state for additional uniqueness
-            if let Ok(chain_tip) = node_api.get_chain_tip().await {
-                id_data.extend_from_slice(&chain_tip);
+    async fn handle_hello_packet(
+        &self,
+        packet: &MeshPacket,
+        peer_addr: &str,
+    ) -> Result<(), MeshError> {
+        let peer_id = MeshIdentity::parse_hello_payload(&packet.payload)?;
+        let stale_id = Self::derive_node_id_from_address(peer_addr);
+        if stale_id != peer_id {
+            self.routing_table.remove_direct_peer(&stale_id);
+        }
+        self.add_peer_with_id(peer_addr, Some(peer_id))?;
+        info!(
+            "Mesh hello from {}: node_id={}",
+            peer_addr,
+            hex::encode(&peer_id[..8])
+        );
+        let node_api = Arc::clone(&self.node_api);
+        let peer_addr_owned = peer_addr.to_string();
+        tokio::spawn(async move {
+            let _ = node_api
+                .publish_event(
+                    EventType::PeerConnected,
+                    EventPayload::PeerConnected {
+                        peer_addr: peer_addr_owned,
+                        transport_type: "mesh-hello".to_string(),
+                        services: 0,
+                        version: 0,
+                        peer_node_id: Some(peer_id.to_vec()),
+                    },
+                )
+                .await;
+        });
+        Ok(())
+    }
+
+    async fn handle_discovery_packet(&self, packet: &MeshPacket) -> Result<(), MeshError> {
+        let message: DiscoveryMessage = bincode::deserialize(&packet.payload)
+            .map_err(|e| MeshError::InvalidPacket(format!("discovery decode: {e}")))?;
+
+        match &message {
+            DiscoveryMessage::RouteRequest { .. } => {
+                if let Some(response) = self
+                    .route_discovery
+                    .handle_route_request(&message, self.node_id)
+                    .await?
+                {
+                    self.send_discovery_to(packet.source, response).await?;
+                }
             }
-            if let Ok(height) = node_api.get_block_height().await {
-                id_data.extend_from_slice(&height.to_le_bytes());
+            DiscoveryMessage::RouteResponse { .. } => {
+                self.route_discovery
+                    .handle_route_response(&message, packet.source)
+                    .await?;
             }
+            _ => {}
+        }
+        Ok(())
+    }
 
-            // Add a constant seed for this node instance
-            id_data.extend_from_slice(b"blvm_mesh_node_id_v1");
+    async fn send_discovery_to(
+        &self,
+        dest: NodeId,
+        message: DiscoveryMessage,
+    ) -> Result<(), MeshError> {
+        let payload = bincode::serialize(&message)
+            .map_err(|e| MeshError::InvalidPacket(format!("discovery encode: {e}")))?;
+        self.send_control_packet(dest, PROTOCOL_DISCOVERY, payload)
+            .await
+    }
 
-            let mut hasher = Sha256::new();
-            hasher.update(&id_data);
-            let hash = hasher.finalize();
-            let mut node_id = [0u8; 32];
-            node_id.copy_from_slice(&hash);
-            node_id
-        } else {
-            // Fallback: Generate from chain state (deterministic per node)
-            let chain_tip = node_api.get_chain_tip().await.unwrap_or([0u8; 32]);
-            let chain_height = node_api.get_block_height().await.unwrap_or(0);
-
-            // Create deterministic ID from chain state
-            let mut id_data = Vec::new();
-            id_data.extend_from_slice(&chain_tip);
-            id_data.extend_from_slice(&chain_height.to_le_bytes());
-            id_data.extend_from_slice(b"mesh_node_id");
-
-            let mut hasher = Sha256::new();
-            hasher.update(&id_data);
-            let hash = hasher.finalize();
-            let mut node_id = [0u8; 32];
-            node_id.copy_from_slice(&hash);
-            node_id
-        };
-
-        // Store for future use
-        if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir) {
-            if let Ok(tree) = db.tree(MESH_STATE_TREE) {
-                let _ = tree.insert(STORAGE_KEY, &node_id);
+    async fn broadcast_discovery(&self, message: &DiscoveryMessage) -> Result<(), MeshError> {
+        let peers: Vec<NodeId> = self
+            .list_direct_peers()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        for peer in peers {
+            if let Err(e) = self.send_discovery_to(peer, message.clone()).await {
+                warn!("Discovery broadcast to {:x?} failed: {}", &peer[..8], e);
             }
         }
+        Ok(())
+    }
 
-        node_id
+    async fn send_control_packet(
+        &self,
+        dest: NodeId,
+        protocol: &str,
+        payload: Vec<u8>,
+    ) -> Result<(), MeshError> {
+        let mut packet = MeshPacket::new(PacketType::Paid, self.node_id, dest, payload);
+        packet.metadata = Some(PacketMetadata {
+            protocol: Some(protocol.to_string()),
+            fields: std::collections::HashMap::new(),
+        });
+        self.route_packet(&packet).await
+    }
+
+    async fn verify_forward_payment(&self, packet: &MeshPacket) -> Result<bool, MeshError> {
+        let policy = self.determine_routing_policy_for_packet(packet);
+        if policy != crate::routing_policy::RoutingPolicy::PaymentRequired {
+            return Ok(true);
+        }
+        if let Some(ref proof) = packet.payment_proof {
+            let replay = self.replay_prevention.lock().await;
+            replay
+                .check_replay(proof, &packet.source, packet.sequence)
+                .map_err(MeshError::ReplayDetected)?;
+            let verification = self.payment_verifier.verify(proof).await?;
+            return Ok(verification.verified);
+        }
+        Ok(false)
+    }
+
+    async fn publish_route_discovered(&self, destination: &NodeId, route: &[NodeId]) {
+        let path: Vec<String> = self
+            .list_direct_peers()
+            .into_iter()
+            .map(|(_, addr)| addr)
+            .take(route.len())
+            .collect();
+        let _ = self
+            .node_api
+            .publish_event(
+                EventType::RouteDiscovered,
+                EventPayload::RouteDiscovered {
+                    destination: destination.to_vec(),
+                    route_path: if path.is_empty() {
+                        vec![hex::encode(&route[0][..8])]
+                    } else {
+                        path
+                    },
+                    route_cost: route.len() as u64 * 10,
+                },
+            )
+            .await;
+    }
+
+    async fn publish_route_failed(&self, destination: &NodeId, reason: &str) {
+        let _ = self
+            .node_api
+            .publish_event(
+                EventType::RouteFailed,
+                EventPayload::RouteFailed {
+                    destination: destination.to_vec(),
+                    reason: reason.to_string(),
+                },
+            )
+            .await;
+    }
+
+    /// Test constructor with explicit node id (no module DB).
+    pub async fn new_for_test(
+        enabled: bool,
+        mode: MeshMode,
+        node_id: NodeId,
+        node_api: Arc<dyn NodeAPI>,
+    ) -> Self {
+        Self::new_for_test_with_identity(
+            enabled,
+            mode,
+            Arc::new(MeshIdentity::from_seed(node_id[0])),
+            Some(node_id),
+            node_api,
+        )
+        .await
+    }
+
+    /// Test constructor using Ed25519 identity (D-1 aligned).
+    pub async fn new_for_test_with_seed(
+        enabled: bool,
+        mode: MeshMode,
+        seed: u8,
+        node_api: Arc<dyn NodeAPI>,
+    ) -> Self {
+        Self::new_for_test_with_identity(
+            enabled,
+            mode,
+            Arc::new(MeshIdentity::from_seed(seed)),
+            None,
+            node_api,
+        )
+        .await
+    }
+
+    async fn new_for_test_with_identity(
+        enabled: bool,
+        mode: MeshMode,
+        identity: Arc<MeshIdentity>,
+        node_id_override: Option<NodeId>,
+        node_api: Arc<dyn NodeAPI>,
+    ) -> Self {
+        Self::new_for_test_with_identity_and_rate_limit(
+            enabled,
+            mode,
+            identity,
+            node_id_override,
+            node_api,
+            0,
+        )
+        .await
+    }
+
+    async fn new_for_test_with_identity_and_rate_limit(
+        enabled: bool,
+        mode: MeshMode,
+        identity: Arc<MeshIdentity>,
+        node_id_override: Option<NodeId>,
+        node_api: Arc<dyn NodeAPI>,
+        rate_limit_per_minute: u32,
+    ) -> Self {
+        let routing_policy = RwLock::new(RoutingPolicyEngine::new(mode));
+        let payment_verifier = PaymentVerifier::new(Arc::clone(&node_api));
+        const REPLAY_EXPIRY_SECONDS: u64 = 24 * 60 * 60;
+        let replay_prevention = Arc::new(Mutex::new(ReplayPrevention::new(REPLAY_EXPIRY_SECONDS)));
+        const ROUTE_EXPIRY_SECONDS: u64 = 60 * 60;
+        let routing_table = Arc::new(RoutingTable::new(ROUTE_EXPIRY_SECONDS));
+        let route_discovery = Arc::new(RouteDiscovery::new(
+            Arc::clone(&routing_table),
+            10,
+            30,
+        ));
+        let node_id = node_id_override.unwrap_or_else(|| identity.node_id());
+
+        Self {
+            enabled,
+            routing_policy,
+            payment_verifier,
+            replay_prevention,
+            routing_table,
+            route_discovery,
+            identity,
+            node_id,
+            node_api,
+            outbound_sequence: AtomicU64::new(1),
+            rate_limiter: Arc::new(RateLimiter::new(rate_limit_per_minute, 60)),
+            packet_sequences: Arc::new(PacketSequenceGuard::new()),
+            local_delivery_queue: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Test helper: manager with a strict ingress rate limit.
+    pub async fn new_for_test_with_rate_limit(
+        enabled: bool,
+        mode: MeshMode,
+        seed: u8,
+        node_api: Arc<dyn NodeAPI>,
+        rate_limit_per_minute: u32,
+    ) -> Self {
+        Self::new_for_test_with_identity_and_rate_limit(
+            enabled,
+            mode,
+            Arc::new(MeshIdentity::from_seed(seed)),
+            None,
+            node_api,
+            rate_limit_per_minute,
+        )
+        .await
     }
 
     /// Derive node ID from peer address (simplified - in production would use peer's public key)
-    fn derive_node_id_from_address(peer_addr: &str) -> NodeId {
+    pub(crate) fn derive_node_id_from_address(peer_addr: &str) -> NodeId {
         // In production, this would:
         // 1. Get peer's public key from handshake or peer info
         // 2. SHA256 hash the public key
@@ -716,5 +1217,127 @@ impl MeshManager {
         let mut node_id = [0u8; 32];
         node_id.copy_from_slice(&hash);
         node_id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packet::{MeshPacket, PacketType};
+    use crate::routing_policy::{MeshMode, RoutingPolicy};
+    use crate::test_support::TestNodeAPI;
+    use std::sync::Arc;
+
+    fn id(byte: u8) -> NodeId {
+        [byte; 32]
+    }
+
+    #[tokio::test]
+    async fn add_peer_with_explicit_node_id_stores_route() {
+        let manager =
+            MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
+        let peer_id = id(2);
+        manager
+            .add_peer_with_id("127.0.0.1:18333", Some(peer_id))
+            .unwrap();
+        let peers = manager.list_direct_peers();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].0, peer_id);
+        assert_eq!(peers[0].1, "127.0.0.1:18333");
+    }
+
+    #[tokio::test]
+    async fn add_peer_without_node_id_derives_from_address() {
+        let manager =
+            MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
+        manager.add_peer("10.0.0.1:8333").unwrap();
+        let expected = MeshManager::derive_node_id_from_address("10.0.0.1:8333");
+        let peers = manager.list_direct_peers();
+        assert_eq!(peers[0].0, expected);
+    }
+
+    #[tokio::test]
+    async fn handle_incoming_packet_delivers_when_destination_matches() {
+        let local = id(42);
+        let manager =
+            MeshManager::new_for_test(true, MeshMode::Open, local, Arc::new(TestNodeAPI::default())).await;
+        let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"hello".to_vec());
+        manager.handle_incoming_packet(&packet, None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_delivery_enqueued_for_app_protocol() {
+        let local = id(42);
+        let manager =
+            MeshManager::new_for_test(true, MeshMode::Open, local, Arc::new(TestNodeAPI::default())).await;
+        let mut packet = MeshPacket::new(PacketType::Paid, id(1), local, b"ukm-json".to_vec());
+        packet.metadata = Some(PacketMetadata {
+            protocol: Some("bitsov-ukm-v1".to_string()),
+            fields: Default::default(),
+        });
+        manager.handle_incoming_packet(&packet, None).await.unwrap();
+        let deliveries = manager
+            .poll_local_deliveries(Some("bitsov-ukm-v1"), 8)
+            .await;
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].payload, b"ukm-json");
+        assert!(manager.poll_local_deliveries(Some("bitsov-ukm-v1"), 8).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn handle_mesh_packet_received_deserializes_and_delivers() {
+        let local = id(7);
+        let manager =
+            MeshManager::new_for_test(true, MeshMode::Open, local, Arc::new(TestNodeAPI::default())).await;
+        let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"wire".to_vec());
+        let wire = serialize_mesh_packet(&packet).unwrap();
+        manager
+            .handle_mesh_packet_received(&wire, "127.0.0.1:1")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn route_packet_open_mode_accepts_paid_without_proof() {
+        let manager =
+            MeshManager::new_for_test(true, MeshMode::Open, id(1), Arc::new(TestNodeAPI::default())).await;
+        manager.add_peer_with_id("127.0.0.1:2", Some(id(2))).unwrap();
+        let packet = MeshPacket::new(PacketType::Paid, id(1), id(2), b"payload".to_vec());
+        manager.route_packet(&packet).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn route_packet_payment_gated_rejects_without_proof() {
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::PaymentGated,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        manager.add_peer_with_id("127.0.0.1:2", Some(id(2))).unwrap();
+        let packet = MeshPacket::new(PacketType::Paid, id(1), id(2), b"payload".to_vec());
+        let err = manager.route_packet(&packet).await.unwrap_err();
+        assert!(matches!(err, MeshError::PaymentVerification(_)));
+    }
+
+    #[test]
+    fn determine_routing_policy_for_packet_uses_type_not_payload() {
+        let manager = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            MeshManager::new_for_test(
+                true,
+                MeshMode::PaymentGated,
+                id(1),
+                Arc::new(TestNodeAPI::default()),
+            )
+            .await
+        });
+        // Opaque app bytes would sniff as Unknown; Paid type should map to MeshPacket policy.
+        let packet = MeshPacket::new(PacketType::Paid, id(1), id(2), vec![0xde, 0xad]);
+        let policy = manager.determine_routing_policy_for_packet(&packet);
+        assert_eq!(policy, RoutingPolicy::PaymentRequired);
+        // Same payload bytes sniffed directly would also be Unknown → payment in payment_gated
+        let sniffed = manager.determine_routing_policy(&[0xde, 0xad]);
+        assert_eq!(sniffed, RoutingPolicy::PaymentRequired);
     }
 }

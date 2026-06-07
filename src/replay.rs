@@ -6,10 +6,11 @@ use crate::payment_proof::PaymentProof;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Replay prevention entry (combined structure)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ReplayEntry {
     /// Timestamp when hash was first seen
     timestamp: u64,

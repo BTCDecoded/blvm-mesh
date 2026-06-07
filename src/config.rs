@@ -10,6 +10,14 @@ fn default_mode() -> String {
     "payment_gated".to_string()
 }
 
+/// Static peer entry with optional explicit node id (D-5).
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+pub struct MeshPeerEntry {
+    pub address: String,
+    #[serde(default)]
+    pub node_id_hex: Option<String>,
+}
+
 /// Mesh module configuration.
 ///
 /// Config file: `config.toml` in module data dir.
@@ -28,15 +36,25 @@ pub struct MeshConfig {
     #[config_env]
     pub mode: String,
 
-    /// Static peer list (comma-separated addresses).
+    /// Static peer list (legacy: address-only strings).
     #[serde(default)]
     pub peer_list: Vec<String>,
+    /// Structured peers (`address` + optional `node_id_hex`).
+    #[serde(default)]
+    pub peers: Vec<MeshPeerEntry>,
     /// Bootstrap nodes for discovery.
     #[serde(default)]
     pub bootstrap_nodes: Vec<String>,
     /// Max direct peers.
     #[serde(default = "default_max_peers")]
     pub max_peers: u32,
+    /// Ingress packets per peer per minute (0 = disabled).
+    #[serde(default = "default_rate_limit_per_minute")]
+    pub rate_limit_per_minute: u32,
+}
+
+fn default_rate_limit_per_minute() -> u32 {
+    120
 }
 
 fn default_max_peers() -> u32 {

@@ -21,7 +21,18 @@ pub enum PaymentProof {
         /// Invoice expiry timestamp
         expires_at: u64,
     },
-    /// CTV instant settlement proof (future, when CTV is activated)
+    /// On-chain settlement proof (BIP70 session / mempool attestation, path 3)
+    OnChainSettlement {
+        /// BIP70 payment request id
+        payment_request_id: String,
+        /// On-chain transaction hash
+        tx_hash: [u8; 32],
+        /// Amount in satoshis
+        amount_sats: u64,
+        /// Proof timestamp
+        timestamp: u64,
+    },
+    /// CTV instant settlement proof (when CTV is activated)
     #[cfg(feature = "ctv")]
     InstantSettlement {
         /// CTV covenant proof (template hash + transaction structure)
@@ -42,6 +53,7 @@ impl PaymentProof {
     pub fn amount_sats(&self) -> u64 {
         match self {
             PaymentProof::Lightning { amount_msats, .. } => amount_msats / 1000,
+            PaymentProof::OnChainSettlement { amount_sats, .. } => *amount_sats,
             #[cfg(feature = "ctv")]
             PaymentProof::InstantSettlement { amount_sats, .. } => *amount_sats,
         }
@@ -51,6 +63,7 @@ impl PaymentProof {
     pub fn timestamp(&self) -> u64 {
         match self {
             PaymentProof::Lightning { timestamp, .. } => *timestamp,
+            PaymentProof::OnChainSettlement { timestamp, .. } => *timestamp,
             #[cfg(feature = "ctv")]
             PaymentProof::InstantSettlement { timestamp, .. } => *timestamp,
         }
@@ -65,6 +78,10 @@ impl PaymentProof {
 
         match self {
             PaymentProof::Lightning { expires_at, .. } => now > *expires_at,
+            PaymentProof::OnChainSettlement { timestamp, .. } => {
+                const MAX_AGE_SECONDS: u64 = 24 * 60 * 60;
+                now > timestamp + MAX_AGE_SECONDS
+            }
             #[cfg(feature = "ctv")]
             PaymentProof::InstantSettlement { timestamp, .. } => {
                 // CTV proofs don't expire (they're on-chain commitments)

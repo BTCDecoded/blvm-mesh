@@ -29,11 +29,15 @@ modules_dir = "modules"   # or absolute path
 
 `module.toml` must declare: `register_module_api`, `network_access`, `publish_events`, `read_payment`. Without these, spawned modules cannot register their API or reach P2P/payment state.
 
-### Subprocess ModuleAPI
+### Subprocess ModuleAPI and JSON-RPC
 
-Spawned modules register method descriptors over IPC; blvm-node installs an `IpcForwardingModuleAPI` proxy in `ModuleApiRegistry`. RPC `meshsendpacket` / `meshpollreceived` call `call_module("send_packet")` and `call_module("poll_local_deliveries")` through this proxy.
+Spawned modules register method descriptors over IPC; blvm-node installs an
+`IpcForwardingModuleAPI` proxy in `ModuleApiRegistry`. BitSov-facing JSON-RPC
+(`meshsendpacket`, `meshpollreceived`, `meshquoteroute`, `meshrequesthopinvoice`)
+is registered by blvm-mesh via `register_rpc_endpoint` on module connect.
 
-Verify: `cargo test -p blvm-node --test mesh_ipc_proxy_test` and `cargo test -p blvm-node --test mesh_rpc_integration_test`.
+Verify: `cargo test -p blvm-node --test mesh_ipc_proxy_test` and
+`cargo test -p blvm-mesh json_rpc`.
 
 ```toml
 # <data_dir>/modules/blvm-mesh/config.toml

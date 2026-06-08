@@ -3,6 +3,7 @@
 use blvm_node::module::ipc::protocol::{EventMessage, ModuleMessage};
 use blvm_sdk::module::prelude::*;
 use blvm_sdk_macros::module;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -167,6 +168,42 @@ impl MeshModule {
             .remove_peer(addr)
             .map_err(|e| ModuleError::Other(e.to_string()))?;
         Ok(format!("Removed peer: {addr}"))
+    }
+
+    #[rpc_method(name = "meshsendpacket")]
+    fn rpc_meshsendpacket(
+        &self,
+        params: &Value,
+        _db: &Arc<dyn blvm_node::storage::database::Database>,
+    ) -> Result<Value, ModuleError> {
+        crate::json_rpc::meshsendpacket(&self.manager, params)
+    }
+
+    #[rpc_method(name = "meshpollreceived")]
+    fn rpc_meshpollreceived(
+        &self,
+        params: &Value,
+        _db: &Arc<dyn blvm_node::storage::database::Database>,
+    ) -> Result<Value, ModuleError> {
+        crate::json_rpc::meshpollreceived(&self.manager, params)
+    }
+
+    #[rpc_method(name = "meshquoteroute")]
+    fn rpc_meshquoteroute(
+        &self,
+        params: &Value,
+        _db: &Arc<dyn blvm_node::storage::database::Database>,
+    ) -> Result<Value, ModuleError> {
+        crate::json_rpc::meshquoteroute(&self.manager, params)
+    }
+
+    #[rpc_method(name = "meshrequesthopinvoice")]
+    fn rpc_meshrequesthopinvoice(
+        &self,
+        params: &Value,
+        _db: &Arc<dyn blvm_node::storage::database::Database>,
+    ) -> Result<Value, ModuleError> {
+        crate::json_rpc::meshrequesthopinvoice(&self.manager, params)
     }
 
     #[command]

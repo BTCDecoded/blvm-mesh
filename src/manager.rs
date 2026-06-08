@@ -838,8 +838,7 @@ impl MeshManager {
 
     /// Issue a Lightning hop invoice via the co-located blvm-lightning module.
     ///
-    /// Relay operators expose this through blvm-node `meshrequesthopinvoice` RPC so
-    /// endpoints pay the first-hop relay rather than self-issuing invoices.
+    /// Exposed to BitSov via the module RPC extender as `meshrequesthopinvoice`.
     pub async fn request_hop_invoice(
         &self,
         destination: NodeId,

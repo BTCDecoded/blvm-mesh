@@ -109,7 +109,6 @@ fn persist_identity_seed(data_dir: &Path, seed: &[u8; 32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn load_from_config_identity_seed_hex() {

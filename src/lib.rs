@@ -7,6 +7,7 @@ pub mod config;
 pub mod discovery;
 pub mod edge_transport;
 pub mod identity;
+pub mod json_rpc;
 pub mod module;
 pub mod storage;
 

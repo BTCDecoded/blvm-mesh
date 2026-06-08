@@ -31,7 +31,7 @@ pub struct MeshStats {
     pub replay: ReplayStats,
 }
 
-/// App payload delivered locally (for BitSov and other mesh consumers).
+/// App payload delivered locally (for external mesh consumers).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalDelivery {
     pub protocol_id: String,
@@ -67,7 +67,7 @@ pub struct MeshManager {
     rate_limiter: Arc<RateLimiter>,
     /// Per-source ingress sequence guard.
     packet_sequences: Arc<PacketSequenceGuard>,
-    /// Locally delivered app payloads awaiting external poll (e.g. BitSov UKM ingress).
+    /// Locally delivered app payloads awaiting external poll (e.g. app ingress bridge).
     local_delivery_queue: Arc<Mutex<Vec<LocalDelivery>>>,
 }
 
@@ -838,7 +838,7 @@ impl MeshManager {
 
     /// Issue a Lightning hop invoice via the co-located blvm-lightning module.
     ///
-    /// Exposed to BitSov via the module RPC extender as `meshrequesthopinvoice`.
+    /// Exposed via the module RPC extender as `meshrequesthopinvoice`.
     pub async fn request_hop_invoice(
         &self,
         destination: NodeId,
@@ -846,7 +846,9 @@ impl MeshManager {
         expiry_seconds: u64,
     ) -> Result<crate::api::HopInvoiceResponse, MeshError> {
         if !self.enabled {
-            return Err(MeshError::MeshDisabled("Mesh is disabled".to_string()));
+            return Err(MeshError::MeshDisabled(
+                "Mesh is disabled".to_string(),
+            ));
         }
         if amount_msats == 0 {
             return Err(MeshError::InvalidPacket(
@@ -855,7 +857,10 @@ impl MeshManager {
         }
 
         const LIGHTNING_MODULE_ID: &str = "blvm-lightning";
-        let description = format!("blvm-mesh hop to {}", hex::encode(&destination[..8]));
+        let description = format!(
+            "blvm-mesh hop to {}",
+            hex::encode(&destination[..8])
+        );
         let params = serde_json::json!({
             "amount_msats": amount_msats,
             "description": description,
@@ -867,7 +872,11 @@ impl MeshManager {
 
         let response_bytes = self
             .node_api
-            .call_module(Some(LIGHTNING_MODULE_ID), "create_invoice", params_bytes)
+            .call_module(
+                Some(LIGHTNING_MODULE_ID),
+                "create_invoice",
+                params_bytes,
+            )
             .await
             .map_err(|e| {
                 MeshError::PaymentError(format!("lightning create_invoice failed: {e}"))
@@ -1317,17 +1326,17 @@ mod tests {
         .await;
         let mut packet = MeshPacket::new(PacketType::Paid, id(1), local, b"ukm-json".to_vec());
         packet.metadata = Some(PacketMetadata {
-            protocol: Some("bitsov-ukm-v1".to_string()),
+            protocol: Some("app-ukm-v1".to_string()),
             fields: Default::default(),
         });
         manager.handle_incoming_packet(&packet, None).await.unwrap();
         let deliveries = manager
-            .poll_local_deliveries(Some("bitsov-ukm-v1"), 8)
+            .poll_local_deliveries(Some("app-ukm-v1"), 8)
             .await;
         assert_eq!(deliveries.len(), 1);
         assert_eq!(deliveries[0].payload, b"ukm-json");
         assert!(manager
-            .poll_local_deliveries(Some("bitsov-ukm-v1"), 8)
+            .poll_local_deliveries(Some("app-ukm-v1"), 8)
             .await
             .is_empty());
     }

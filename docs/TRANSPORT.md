@@ -27,12 +27,12 @@ enabled_modules = ["blvm-mesh"]
 modules_dir = "modules"   # or absolute path
 ```
 
-`module.toml` must declare: `register_module_api`, `network_access`, `publish_events`, `read_payment`. Without these, spawned modules cannot register their API or reach P2P/payment state.
+`module.toml` must declare: `register_module_api`, `register_rpc_endpoint`, `network_access`, `publish_events`, `read_payment`. Without these, spawned modules cannot register their API or reach P2P/payment state.
 
 ### Subprocess ModuleAPI and JSON-RPC
 
 Spawned modules register method descriptors over IPC; blvm-node installs an
-`IpcForwardingModuleAPI` proxy in `ModuleApiRegistry`. BitSov-facing JSON-RPC
+`IpcForwardingModuleAPI` proxy in `ModuleApiRegistry`. Application JSON-RPC
 (`meshsendpacket`, `meshpollreceived`, `meshquoteroute`, `meshrequesthopinvoice`)
 is registered by blvm-mesh via `register_rpc_endpoint` on module connect.
 
@@ -58,7 +58,7 @@ cp target/debug/blvm-mesh $NODE_DATA/modules/blvm-mesh/target/release/blvm-mesh
 1. Start node A and node B with `blvm-mesh` enabled, `mode = "open"`.
 2. On B: `mesh status` — note **Node ID** (64-char hex).
 3. On A: `mesh add-peer <B-addr> <B-node-id-hex>` (explicit id required until mesh hello).
-4. On A: `mesh send_packet <B-node-id-hex> "hello" bitsov-ukm-v1` (optional third arg sets `metadata.protocol` for app delivery / poll filter).
+4. On A: `mesh send_packet <B-node-id-hex> "hello" my-app-v1` (optional third arg sets `metadata.protocol` for app delivery / poll filter).
 5. On B: logs should show `Packet delivered to local node`.
 
 Without explicit `node_id_hex` on `add-peer`, local delivery fails until mesh hello completes (Ed25519 pubkey exchange).
@@ -76,17 +76,17 @@ Automated equivalent: `cargo test -p blvm-mesh --test multihop_harness`.
 
 For `payment_gated`, attach a valid `PaymentProof::Lightning` (or `OnChainSettlement` stub) before send.
 
-## BitSov integration
+## Application integration
 
 | Direction | Path |
 |-----------|------|
-| Outbound | `HybridBlvmTransport` → `meshsendpacket` → mesh module → P2P |
-| Inbound | `meshpollreceived` → UKM decode → payment gate |
-| ACK/reject | Mesh control frames (`bitsov-ctrl-v1` wrapper) via hybrid `send_raw_frame` |
+| Outbound | Client → `meshsendpacket` RPC → mesh module → P2P |
+| Inbound | `meshpollreceived` RPC → local delivery queue → app decode |
+| Control | Opaque control-frame wrapper via `send_raw_frame` / mesh send |
 
-Wire compatibility: bincode `PaymentProof` variant order is `0 Lightning`, `1 OnChainSettlement`, `2 InstantSettlement`. BitSov uses protocol id `bitsov-ukm-v1`.
+Wire compatibility: bincode `PaymentProof` variant order is `0 Lightning`, `1 OnChainSettlement`, `2 InstantSettlement`. Apps choose an opaque `metadata.protocol` string (e.g. `my-app-v1`) for poll filtering.
 
-**Identity:** BitSov app `NodeId` and mesh `MeshIdentity` are separate Ed25519 keys until explicitly bound (configure receiver mesh id from `mesh status`, or peer registry `mesh_node_id` when wired).
+**Identity:** Application node ids and mesh `MeshIdentity` are separate Ed25519 keys until explicitly bound (configure receiver mesh id from `mesh status`, or peer registry `mesh_node_id` when wired).
 
 ## Payment paths (overview)
 

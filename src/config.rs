@@ -36,7 +36,7 @@ pub struct MeshConfig {
     #[config_env]
     pub mode: String,
 
-    /// Ed25519 signing seed (hex) injected by BitSov for unified mesh identity.
+    /// Ed25519 signing seed (hex) injected by co-located apps for unified mesh identity.
     #[serde(default)]
     pub identity_seed_hex: Option<String>,
 

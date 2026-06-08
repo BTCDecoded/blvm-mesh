@@ -1,5 +1,5 @@
 name = "blvm-mesh"
-version = "0.1.0"
+version = "0.1.1"
 description = "Commons Mesh networking module for blvm-node"
 author = "Bitcoin Commons Team"
 entry_point = "blvm-mesh"

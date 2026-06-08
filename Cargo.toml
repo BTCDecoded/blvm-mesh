@@ -38,7 +38,7 @@ sha2 = "0.10"
 
 [package]
 name = "blvm-mesh"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -100,13 +100,3 @@ secp256k1 = { version = "0.28", features = ["recovery"] }
 
 # Local monorepo: sibling paths override workspace dependency versions for all workspace members.
 # Strip this section in CI/release (BTCDecoded/rust-ci/strip-patch-crates-io@main).
-[patch.crates-io]
-blvm-node = { path = "../blvm-node" }
-blvm-secp256k1 = { path = "../blvm-secp256k1" }
-blvm-protocol = { path = "../blvm-protocol" }
-blvm-consensus = { path = "../blvm-consensus" }
-blvm-primitives = { path = "../blvm-primitives" }
-blvm-muhash = { path = "../blvm-muhash" }
-blvm-spec-lock = { path = "../blvm-spec-lock" }
-blvm-sdk = { path = "../blvm-sdk" }
-blvm-sdk-macros = { path = "../blvm-sdk/crates/blvm-sdk-macros" }

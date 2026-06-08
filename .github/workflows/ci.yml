@@ -143,17 +143,25 @@ jobs:
           echo "HOME=${RUNNER_TEMP}/blvm-mesh-ci-home" >> "$GITHUB_ENV"
 
       - name: Cache bind env (Linux self-hosted)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.use_cross != true
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: bind-env
           cache-key: ${{ needs.setup.outputs.cache-key }}-${{ matrix.target }}
 
       - name: Restore Cargo cache (Linux self-hosted)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.use_cross != true
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: restore
+
+      - name: Isolate CARGO_HOME for cross (Linux)
+        if: runner.os == 'Linux' && matrix.use_cross
+        run: |
+          CROSS_CARGO="${RUNNER_TEMP}/blvm-mesh-cross-cargo"
+          rm -rf "$CROSS_CARGO"
+          mkdir -p "$CROSS_CARGO"
+          echo "CARGO_HOME=$CROSS_CARGO" >> "$GITHUB_ENV"
 
       - name: Install Rust (Linux self-hosted)
         if: runner.os == 'Linux'
@@ -201,7 +209,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} -p blvm-mesh --bin blvm-mesh
 
       - name: Save Cargo cache (Linux self-hosted)
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os == 'Linux' && matrix.use_cross != true
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: save

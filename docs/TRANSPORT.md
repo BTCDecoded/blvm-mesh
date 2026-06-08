@@ -36,8 +36,8 @@ Spawned modules register method descriptors over IPC; blvm-node installs an
 (`meshsendpacket`, `meshpollreceived`, `meshquoteroute`, `meshrequesthopinvoice`)
 is registered by blvm-mesh via `register_rpc_endpoint` on module connect.
 
-Verify: `cargo test -p blvm-node --test mesh_ipc_proxy_test` and
-`cargo test -p blvm-mesh json_rpc`.
+Verify: `cargo test -p blvm-node --test ipc_forwarding_module_api_test` and
+`cargo test -p blvm-mesh --test module_api_and_json_rpc_test`.
 
 ```toml
 # <data_dir>/modules/blvm-mesh/config.toml

@@ -35,8 +35,11 @@ pub fn meshsendpacket(manager: &Arc<MeshManager>, params: &Value) -> Result<Valu
     }
 
     let api = MeshModuleAPI::new(Arc::clone(manager));
-    let response_bytes =
-        blvm_sdk::module::runner::run_async(api.handle_request("send_packet", &request_bytes, "rpc"))?;
+    let response_bytes = blvm_sdk::module::runner::run_async(api.handle_request(
+        "send_packet",
+        &request_bytes,
+        "rpc",
+    ))?;
 
     let result: SendPacketResponse = bincode::deserialize(&response_bytes)
         .map_err(|e| ModuleError::OperationError(format!("send_packet response decode: {e}")))?;
@@ -62,20 +65,22 @@ pub fn meshpollreceived(manager: &Arc<MeshManager>, params: &Value) -> Result<Va
     #[derive(serde::Serialize)]
     struct PollRequest {
         protocol_id: Option<String>,
-        max_packets: usize,
+        max_packets: Option<usize>,
     }
 
     let request = PollRequest {
         protocol_id: protocol_id.map(String::from),
-        max_packets,
+        max_packets: Some(max_packets),
     };
     let request_bytes = bincode::serialize(&request)
         .map_err(|e| ModuleError::OperationError(format!("poll request encode: {e}")))?;
 
     let api = MeshModuleAPI::new(Arc::clone(manager));
-    let response_bytes = blvm_sdk::module::runner::run_async(
-        api.handle_request("poll_local_deliveries", &request_bytes, "rpc"),
-    )?;
+    let response_bytes = blvm_sdk::module::runner::run_async(api.handle_request(
+        "poll_local_deliveries",
+        &request_bytes,
+        "rpc",
+    ))?;
 
     let deliveries: Vec<LocalDelivery> = bincode::deserialize(&response_bytes)
         .map_err(|e| ModuleError::OperationError(format!("poll response decode: {e}")))?;
@@ -198,11 +203,9 @@ mod tests {
                 .await,
             )
         });
-        let err = meshrequesthopinvoice(
-            &mgr,
-            &json!({ "destination_hex": hex::encode([1u8; 32]) }),
-        )
-        .unwrap_err();
+        let err =
+            meshrequesthopinvoice(&mgr, &json!({ "destination_hex": hex::encode([1u8; 32]) }))
+                .unwrap_err();
         assert!(err.to_string().contains("amount_msats"));
     }
 }

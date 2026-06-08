@@ -846,9 +846,7 @@ impl MeshManager {
         expiry_seconds: u64,
     ) -> Result<crate::api::HopInvoiceResponse, MeshError> {
         if !self.enabled {
-            return Err(MeshError::MeshDisabled(
-                "Mesh is disabled".to_string(),
-            ));
+            return Err(MeshError::MeshDisabled("Mesh is disabled".to_string()));
         }
         if amount_msats == 0 {
             return Err(MeshError::InvalidPacket(
@@ -857,10 +855,7 @@ impl MeshManager {
         }
 
         const LIGHTNING_MODULE_ID: &str = "blvm-lightning";
-        let description = format!(
-            "blvm-mesh hop to {}",
-            hex::encode(&destination[..8])
-        );
+        let description = format!("blvm-mesh hop to {}", hex::encode(&destination[..8]));
         let params = serde_json::json!({
             "amount_msats": amount_msats,
             "description": description,
@@ -872,11 +867,7 @@ impl MeshManager {
 
         let response_bytes = self
             .node_api
-            .call_module(
-                Some(LIGHTNING_MODULE_ID),
-                "create_invoice",
-                params_bytes,
-            )
+            .call_module(Some(LIGHTNING_MODULE_ID), "create_invoice", params_bytes)
             .await
             .map_err(|e| {
                 MeshError::PaymentError(format!("lightning create_invoice failed: {e}"))
@@ -1330,9 +1321,7 @@ mod tests {
             fields: Default::default(),
         });
         manager.handle_incoming_packet(&packet, None).await.unwrap();
-        let deliveries = manager
-            .poll_local_deliveries(Some("app-ukm-v1"), 8)
-            .await;
+        let deliveries = manager.poll_local_deliveries(Some("app-ukm-v1"), 8).await;
         assert_eq!(deliveries.len(), 1);
         assert_eq!(deliveries[0].payload, b"ukm-json");
         assert!(manager

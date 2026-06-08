@@ -23,7 +23,7 @@ Routing policy uses **`packet_type`** on mesh-originated packets (not payload sn
 ```toml
 # blvm-node config
 [modules]
-enabled_modules = ["blvm-mesh"]
+blvm-mesh = "0.1.*"
 modules_dir = "modules"   # or absolute path
 ```
 

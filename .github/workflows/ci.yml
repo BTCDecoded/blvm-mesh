@@ -15,6 +15,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
   CARGO_INCREMENTAL: "1"
+  # tmpfs /tmp is small on self-hosted runners; keep cargo/target caches on /mnt/data.
+  BLVM_MESH_CACHE_ROOT: /mnt/data/runner-cache/blvm-mesh
 
 jobs:
   setup:
@@ -43,7 +45,7 @@ jobs:
           TOOLCHAIN=$(grep -E '^channel|rust-version' rust-toolchain.toml Cargo.toml 2>/dev/null | head -1 | sha256sum | cut -d' ' -f1 || echo "stable")
           CACHE_KEY="${DEPS_KEY}-${TOOLCHAIN}"
           echo "cache-key=$CACHE_KEY" >> "$GITHUB_OUTPUT"
-          CACHE_ROOT="/tmp/runner-cache"
+          CACHE_ROOT="${BLVM_MESH_CACHE_ROOT}"
           mkdir -p "$CACHE_ROOT/cargo/$CACHE_KEY"/{registry,git} "$CACHE_ROOT/target/$CACHE_KEY"
 
   quality:
@@ -71,11 +73,13 @@ jobs:
         with:
           operation: bind-env
           cache-key: ${{ needs.setup.outputs.cache-key }}-quality
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Restore Cargo cache (Linux self-hosted)
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: restore
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Install Rust (Linux self-hosted)
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
@@ -102,12 +106,14 @@ jobs:
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: save
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Prune old runner caches (Linux self-hosted)
         if: always()
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: prune
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
   build:
     name: Build ${{ matrix.target }}
@@ -150,12 +156,14 @@ jobs:
         with:
           operation: bind-env
           cache-key: ${{ needs.setup.outputs.cache-key }}-${{ matrix.target }}
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Restore Cargo cache (Linux self-hosted)
         if: runner.os == 'Linux' && matrix.use_cross != true
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: restore
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Isolate CARGO_HOME for cross (Linux)
         if: runner.os == 'Linux' && matrix.use_cross
@@ -215,9 +223,11 @@ jobs:
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: save
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Prune old runner caches (Linux self-hosted)
         if: always() && runner.os == 'Linux'
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: prune
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}

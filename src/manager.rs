@@ -836,6 +836,66 @@ impl MeshManager {
         0
     }
 
+    /// Issue a Lightning hop invoice via the co-located blvm-lightning module.
+    ///
+    /// Relay operators expose this through blvm-node `meshrequesthopinvoice` RPC so
+    /// endpoints pay the first-hop relay rather than self-issuing invoices.
+    pub async fn request_hop_invoice(
+        &self,
+        destination: NodeId,
+        amount_msats: u64,
+        expiry_seconds: u64,
+    ) -> Result<crate::api::HopInvoiceResponse, MeshError> {
+        if !self.enabled {
+            return Err(MeshError::MeshDisabled("Mesh is disabled".to_string()));
+        }
+        if amount_msats == 0 {
+            return Err(MeshError::InvalidPacket(
+                "amount_msats must be greater than zero".to_string(),
+            ));
+        }
+
+        const LIGHTNING_MODULE_ID: &str = "blvm-lightning";
+        let description = format!("blvm-mesh hop to {}", hex::encode(&destination[..8]));
+        let params = serde_json::json!({
+            "amount_msats": amount_msats,
+            "description": description,
+            "expiry_seconds": expiry_seconds,
+        });
+        let params_bytes = serde_json::to_vec(&params).map_err(|e| {
+            MeshError::PaymentError(format!("hop invoice params encode failed: {e}"))
+        })?;
+
+        let response_bytes = self
+            .node_api
+            .call_module(Some(LIGHTNING_MODULE_ID), "create_invoice", params_bytes)
+            .await
+            .map_err(|e| {
+                MeshError::PaymentError(format!("lightning create_invoice failed: {e}"))
+            })?;
+
+        let response: serde_json::Value = serde_json::from_slice(&response_bytes).map_err(|e| {
+            MeshError::PaymentError(format!("hop invoice response decode failed: {e}"))
+        })?;
+        let invoice = response
+            .get("invoice")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                MeshError::PaymentError("create_invoice response missing invoice".to_string())
+            })?;
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Ok(crate::api::HopInvoiceResponse {
+            invoice: invoice.to_string(),
+            amount_msats,
+            expires_at: now + expiry_seconds,
+        })
+    }
+
     /// Test helper: install a multi-hop route in the local table.
     pub fn install_route_for_test(&self, destination: NodeId, route_path: Vec<NodeId>) {
         let now = SystemTime::now()

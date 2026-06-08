@@ -50,6 +50,14 @@ pub struct DiscoverRouteResponse {
     pub discovery_time_ms: u64,
 }
 
+/// Relay-issued hop invoice for mesh route payment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HopInvoiceResponse {
+    pub invoice: String,
+    pub amount_msats: u64,
+    pub expires_at: u64,
+}
+
 /// Request to register a protocol handler
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterProtocolRequest {
@@ -301,6 +309,24 @@ impl ModuleAPI for MeshModuleAPI {
                 Ok(bincode::serialize(&fee)?)
             }
 
+            "request_hop_invoice" => {
+                #[derive(Deserialize)]
+                struct HopInvoiceRequest {
+                    destination: NodeId,
+                    amount_msats: u64,
+                    expiry_seconds: Option<u64>,
+                }
+                let req: HopInvoiceRequest = bincode::deserialize(params)
+                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
+                let expiry = req.expiry_seconds.unwrap_or(3600);
+                let response = self
+                    .manager
+                    .request_hop_invoice(req.destination, req.amount_msats, expiry)
+                    .await
+                    .map_err(|e| ModuleError::OperationError(e.to_string()))?;
+                Ok(bincode::serialize(&response)?)
+            }
+
             "poll_local_deliveries" => {
                 #[derive(Deserialize)]
                 struct PollRequest {
@@ -336,6 +362,7 @@ impl ModuleAPI for MeshModuleAPI {
             "get_node_id".to_string(),
             "handle_mesh_packet".to_string(),
             "quote_route_fee".to_string(),
+            "request_hop_invoice".to_string(),
             "poll_local_deliveries".to_string(),
         ]
     }

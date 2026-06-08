@@ -17,6 +17,9 @@ permissions:
   contents: write
   actions: read
 
+env:
+  BLVM_MESH_CACHE_ROOT: /mnt/data/runner-cache/blvm-mesh
+
 concurrency:
   group: release-blvm-mesh-${{ github.ref }}
   cancel-in-progress: false
@@ -192,17 +195,27 @@ jobs:
           echo "cache-key=${CACHE_KEY}" >> "$GITHUB_OUTPUT"
 
       - name: Cache bind env (Linux self-hosted)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.use_cross != true
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: bind-env
           cache-key: ${{ steps.runner_cache.outputs.cache-key }}-${{ matrix.target }}
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Restore Cargo cache (Linux self-hosted)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.use_cross != true
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: restore
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
+
+      - name: Isolate CARGO_HOME for cross (Linux)
+        if: runner.os == 'Linux' && matrix.use_cross
+        run: |
+          CROSS_CARGO="${RUNNER_TEMP}/blvm-mesh-release-cross-cargo"
+          rm -rf "$CROSS_CARGO"
+          mkdir -p "$CROSS_CARGO"
+          echo "CARGO_HOME=$CROSS_CARGO" >> "$GITHUB_ENV"
 
       - name: Install Rust (Linux self-hosted)
         if: runner.os == 'Linux'
@@ -263,16 +276,18 @@ jobs:
           echo "$SHA  ${{ matrix.artifact_name }}" >> sha256sums.txt
 
       - name: Save Cargo cache (Linux self-hosted)
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os == 'Linux' && matrix.use_cross != true
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: save
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Prune old runner caches (Linux self-hosted)
         if: always() && runner.os == 'Linux'
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
           operation: prune
+          cache-root: ${{ env.BLVM_MESH_CACHE_ROOT }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5

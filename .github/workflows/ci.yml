@@ -79,6 +79,8 @@ jobs:
 
       - name: Install Rust (Linux self-hosted)
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
+        with:
+          components: rustfmt clippy
 
       - name: Regenerate lockfile for crates.io graph
         shell: bash

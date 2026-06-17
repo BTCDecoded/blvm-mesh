@@ -4,7 +4,7 @@
 //! for sending and receiving mesh packets.
 
 use crate::error::MeshError;
-use crate::packet::{MeshPacket, MAX_BINCODE_PAYLOAD_SIZE, MESH_PACKET_MAGIC};
+use crate::packet::{MAX_BINCODE_PAYLOAD_SIZE, MESH_PACKET_MAGIC, MeshPacket};
 use bincode;
 
 /// Check if data is a mesh packet

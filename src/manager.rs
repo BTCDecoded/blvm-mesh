@@ -1324,10 +1324,12 @@ mod tests {
         let deliveries = manager.poll_local_deliveries(Some("app-ukm-v1"), 8).await;
         assert_eq!(deliveries.len(), 1);
         assert_eq!(deliveries[0].payload, b"ukm-json");
-        assert!(manager
-            .poll_local_deliveries(Some("app-ukm-v1"), 8)
-            .await
-            .is_empty());
+        assert!(
+            manager
+                .poll_local_deliveries(Some("app-ukm-v1"), 8)
+                .await
+                .is_empty()
+        );
     }
 
     #[tokio::test]

@@ -4,16 +4,16 @@
 //! For manual testing: blvm-mesh --module-id <id> --socket-path <path> --data-dir <dir>
 
 use anyhow::Result;
+use blvm_mesh::MeshModule;
 use blvm_mesh::api::MeshModuleAPI;
 use blvm_mesh::config::MeshConfig;
 use blvm_mesh::manager::MeshManager;
 use blvm_mesh::storage::up_v1;
-use blvm_mesh::MeshModule;
 use blvm_node::module::ipc::protocol::{
     InvocationMessage, InvocationResultMessage, InvocationResultPayload, InvocationType,
 };
 use blvm_sdk::migrations;
-use blvm_sdk::module::runner::{run_module_with_setup_and_api, InvocationContext};
+use blvm_sdk::module::runner::{InvocationContext, run_module_with_setup_and_api};
 use blvm_sdk::module::{ModuleBootstrap, ModuleDb};
 use std::sync::Arc;
 use tracing::{error, warn};

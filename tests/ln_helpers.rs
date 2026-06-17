@@ -1,6 +1,6 @@
 //! Helpers for building valid BOLT11 invoices in tests.
 
-use bitcoin::hashes::{sha256, Hash, HashEngine};
+use bitcoin::hashes::{Hash, HashEngine, sha256};
 use bitcoin::secp256k1::{self, ecdsa::RecoverableSignature};
 use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
 use std::time::Duration;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use blvm_node::module::inter_module::api::ModuleAPI;
 use blvm_node::module::traits::ModuleError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::api::{MeshModuleAPI, SendPacketResponse};
 use crate::manager::{LocalDelivery, MeshManager};

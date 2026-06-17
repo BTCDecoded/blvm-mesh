@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use blvm_bridge::{BridgeMode, BridgeModule, BridgeService};
-use blvm_mesh::{parse_edge_transport, MeshClient};
+use blvm_mesh::{MeshClient, parse_edge_transport};
 use blvm_sdk::module::{ModuleBootstrap, ModuleDb};
 use std::path::Path;
 use std::sync::Arc;

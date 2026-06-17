@@ -4,8 +4,8 @@
 
 use blvm_mesh::NodeId;
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
     ChaCha20Poly1305, Key, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

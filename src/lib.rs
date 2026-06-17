@@ -36,7 +36,7 @@ pub use api::{
 pub use app_transport::MeshAppTransport;
 pub use client_api::MeshClient;
 pub use edge_transport::{
-    chunk_bytes, parse_edge_transport, EdgeTransportKind, MESHTASTIC_LORA_APP_PAYLOAD_PLANNING_MAX,
+    EdgeTransportKind, MESHTASTIC_LORA_APP_PAYLOAD_PLANNING_MAX, chunk_bytes, parse_edge_transport,
 };
 pub use manager::{MeshManager, MeshStats};
 pub use module::MeshModule;

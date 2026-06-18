@@ -133,11 +133,13 @@ Prevents reuse of payment proofs.
 
 ## Configuration
 
+Flat top-level keys in `<modules.data_dir>/blvm-mesh/config.toml` (no `[mesh]` wrapper for `MeshConfig`):
+
 ```toml
-[mesh]
 enabled = true
-mode = "payment_gated"  # "bitcoin_only", "payment_gated", "open"
-listen_addr = "0.0.0.0:8334"
+mode = "payment_gated"  # open | payment_gated | bitcoin_only
+max_peers = 50
+rate_limit_per_minute = 120
 ```
 
 ## Error Handling

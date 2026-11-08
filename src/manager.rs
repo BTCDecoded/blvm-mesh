@@ -728,10 +728,6 @@ impl MeshManager {
                         // 2. Checking if it's a mesh packet (magic bytes)
                         // 3. Deserializing and handling via handle_incoming_packet
                     }
-                    EventType::PaymentVerified => {
-                        debug!("Payment verified event received");
-                        // Payment verification handled in route_packet
-                    }
                     _ => {
                         // Ignore other events
                     }
@@ -1093,19 +1089,23 @@ impl MeshManager {
             .map(|(_, addr)| addr)
             .take(route.len())
             .collect();
+        let route_path = if path.is_empty() {
+            vec![hex::encode(&route[0][..8])]
+        } else {
+            path
+        };
         let _ = self
             .node_api
             .publish_event(
-                EventType::RouteDiscovered,
-                EventPayload::RouteDiscovered {
-                    destination: destination.to_vec(),
-                    route_path: if path.is_empty() {
-                        vec![hex::encode(&route[0][..8])]
-                    } else {
-                        path
-                    },
-                    route_cost: route.len() as u64 * 10,
-                },
+                EventType::ModuleEvent,
+                EventPayload::module_event_json(
+                    "RouteDiscovered",
+                    &serde_json::json!({
+                        "destination": hex::encode(destination),
+                        "route_path": route_path,
+                        "route_cost": route.len() as u64 * 10,
+                    }),
+                ),
             )
             .await;
     }
@@ -1114,11 +1114,14 @@ impl MeshManager {
         let _ = self
             .node_api
             .publish_event(
-                EventType::RouteFailed,
-                EventPayload::RouteFailed {
-                    destination: destination.to_vec(),
-                    reason: reason.to_string(),
-                },
+                EventType::ModuleEvent,
+                EventPayload::module_event_json(
+                    "RouteFailed",
+                    &serde_json::json!({
+                        "destination": hex::encode(destination),
+                        "reason": reason,
+                    }),
+                ),
             )
             .await;
     }

@@ -141,7 +141,7 @@ impl NodeAPI for TestNodeAPI {
         Ok(ChainInfo {
             tip_hash: [0u8; 32],
             height: 0,
-            difficulty: 1,
+            difficulty: 1.0,
             chain_work: 0,
             is_synced: true,
         })

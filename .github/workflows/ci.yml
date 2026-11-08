@@ -85,7 +85,6 @@ jobs:
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
         with:
           toolchain: 1.88.0
-        with:
           components: rustfmt clippy
 
       - name: Regenerate lockfile for crates.io graph

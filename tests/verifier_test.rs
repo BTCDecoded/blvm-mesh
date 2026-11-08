@@ -108,7 +108,7 @@ impl NodeAPI for MockNodeAPI {
         Ok(blvm_node::module::traits::ChainInfo {
             tip_hash: [0u8; 32],
             height: 100,
-            difficulty: 1,
+            difficulty: 1.0,
             chain_work: 0,
             is_synced: true,
         })
@@ -570,6 +570,7 @@ async fn test_on_chain_accepts_matching_payment_state() {
         amount_sats: 250,
         tx_hash: Some(tx_hash),
         confirmations: None,
+        reason: None,
     };
     let node_api = OnChainMockNode::with_payment_state(state);
     let verifier = PaymentVerifier::new(node_api);

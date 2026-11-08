@@ -263,11 +263,12 @@ impl MeshModule {
                     fields: std::collections::HashMap::new(),
                 });
             }
+            let dest = hex::encode(&dest_id[..8]);
             manager
                 .route_packet(&packet)
                 .await
-                .map(|_| format!("Packet sent to {}", hex::encode(&dest_id[..8])))
-                .map_err(|e| anyhow::anyhow!("Failed to send packet: {}", e))
+                .map(|_| format!("Packet sent to {dest}"))
+                .map_err(|e| anyhow::anyhow!("Failed to send packet: {e}"))
         })
     }
 }

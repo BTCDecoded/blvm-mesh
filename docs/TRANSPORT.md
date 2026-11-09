@@ -41,7 +41,7 @@ Verify: `cargo test -p blvm-node --test ipc_forwarding_module_api_test` and
 
 ```toml
 # <data_dir>/modules/blvm-mesh/config.toml
-[mesh]
+# MeshConfig is flat. A [mesh] table is ignored and leaves enabled false.
 enabled = true
 mode = "open"
 ```

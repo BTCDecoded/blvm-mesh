@@ -11,6 +11,8 @@ pub struct OnChainMockNode {
     inner: Arc<TestNodeAPI>,
     mempool: Mutex<Vec<[u8; 32]>>,
     payments: Mutex<HashMap<String, PaymentState>>,
+    /// Millisatoshis the Lightning module reports for a received payment.
+    lightning_msats: Mutex<Option<u64>>,
 }
 
 impl OnChainMockNode {
@@ -19,6 +21,7 @@ impl OnChainMockNode {
             inner: Arc::new(TestNodeAPI::default()),
             mempool: Mutex::new(vec![tx_hash]),
             payments: Mutex::new(HashMap::new()),
+            lightning_msats: Mutex::new(None),
         })
     }
 
@@ -29,6 +32,16 @@ impl OnChainMockNode {
             inner: Arc::new(TestNodeAPI::default()),
             mempool: Mutex::new(Vec::new()),
             payments: Mutex::new(map),
+            lightning_msats: Mutex::new(None),
+        })
+    }
+
+    pub fn with_lightning_receipt(amount_msats: u64) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Arc::new(TestNodeAPI::default()),
+            mempool: Mutex::new(Vec::new()),
+            payments: Mutex::new(HashMap::new()),
+            lightning_msats: Mutex::new(Some(amount_msats)),
         })
     }
 }
@@ -234,6 +247,24 @@ impl NodeAPI for OnChainMockNode {
         method: &str,
         params: Vec<u8>,
     ) -> Result<Vec<u8>, ModuleError> {
+        if m == Some("blvm-lightning") && method == "verify_payment" {
+            let amount_msats = *self.lightning_msats.lock().unwrap();
+            let body = match amount_msats {
+                Some(amount_msats) => serde_json::json!({
+                    "verified": true,
+                    "amount_msats": amount_msats,
+                    "timestamp": 1,
+                    "metadata": {}
+                }),
+                None => serde_json::json!({
+                    "verified": false,
+                    "amount_msats": null,
+                    "timestamp": null,
+                    "metadata": {}
+                }),
+            };
+            return Ok(serde_json::to_vec(&body).unwrap_or_default());
+        }
         self.inner.call_module(m, method, params).await
     }
     async fn register_module_api(

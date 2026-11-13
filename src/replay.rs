@@ -58,8 +58,9 @@ impl ReplayPrevention {
         // Clean up expired hashes first
         self.cleanup_expired();
 
-        // Check payment hash not reused (lock-free)
-        let proof_hash = proof.hash();
+        // The key is the payment, not the serialization. A new timestamp
+        // would otherwise make the same transaction a fresh proof.
+        let proof_hash = proof.spent_key();
         if self.replay_data.contains_key(&proof_hash) {
             return Err("Payment proof already used (replay detected)".to_string());
         }

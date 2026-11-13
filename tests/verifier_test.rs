@@ -509,7 +509,7 @@ async fn test_expired_payment_proof() {
 }
 
 #[tokio::test]
-async fn test_on_chain_settlement_stub_accepts_valid_proof() {
+async fn test_on_chain_mempool_membership_is_not_a_payment() {
     let tx_hash = [7u8; 32];
     let node_api = OnChainMockNode::with_mempool_tx(tx_hash);
     let verifier = PaymentVerifier::new(node_api);
@@ -526,8 +526,7 @@ async fn test_on_chain_settlement_stub_accepts_valid_proof() {
     };
 
     let verification = verifier.verify(&proof).await.unwrap();
-    assert!(verification.verified);
-    assert_eq!(verification.amount, 500);
+    assert!(!verification.verified);
 }
 
 #[tokio::test]
@@ -566,7 +565,7 @@ async fn test_on_chain_accepts_matching_payment_state() {
     let tx_hash = [9u8; 32];
     let state = PaymentState {
         payment_id: "req-state".to_string(),
-        status: "pending".to_string(),
+        status: "confirmed".to_string(),
         amount_sats: 250,
         tx_hash: Some(tx_hash),
         confirmations: None,
@@ -584,7 +583,53 @@ async fn test_on_chain_accepts_matching_payment_state() {
         amount_sats: 250,
         timestamp: now,
     };
-    assert!(verifier.verify(&proof).await.unwrap().verified);
+    let verification = verifier.verify(&proof).await.unwrap();
+    assert!(verification.verified);
+    assert_eq!(verification.amount, 250);
+}
+
+#[tokio::test]
+async fn test_on_chain_rejects_a_claim_above_the_recorded_amount() {
+    use blvm_node::module::traits::PaymentState;
+    let tx_hash = [9u8; 32];
+    let state = PaymentState {
+        payment_id: "req-state".to_string(),
+        status: "confirmed".to_string(),
+        amount_sats: 250,
+        tx_hash: Some(tx_hash),
+        confirmations: None,
+        reason: None,
+    };
+    let verifier = PaymentVerifier::new(OnChainMockNode::with_payment_state(state));
+    let proof = PaymentProof::OnChainSettlement {
+        payment_request_id: "req-state".to_string(),
+        tx_hash,
+        amount_sats: 1_000,
+        timestamp: 1,
+    };
+    let verification = verifier.verify(&proof).await.unwrap();
+    assert!(!verification.verified);
+}
+
+#[tokio::test]
+async fn test_on_chain_rejects_a_recorded_payment_with_no_transaction() {
+    use blvm_node::module::traits::PaymentState;
+    let state = PaymentState {
+        payment_id: "req-state".to_string(),
+        status: "confirmed".to_string(),
+        amount_sats: 250,
+        tx_hash: None,
+        confirmations: None,
+        reason: None,
+    };
+    let verifier = PaymentVerifier::new(OnChainMockNode::with_payment_state(state));
+    let proof = PaymentProof::OnChainSettlement {
+        payment_request_id: "req-state".to_string(),
+        tx_hash: [9u8; 32],
+        amount_sats: 250,
+        timestamp: 1,
+    };
+    assert!(!verifier.verify(&proof).await.unwrap().verified);
 }
 
 #[tokio::test]
@@ -611,7 +656,7 @@ async fn test_lightning_amount_mismatch_rejected() {
 }
 
 #[tokio::test]
-async fn test_lightning_valid_preimage_and_amount() {
+async fn test_lightning_preimage_without_a_received_payment_is_rejected() {
     let node_api = Arc::new(MockNodeAPI);
     let verifier = PaymentVerifier::new(node_api);
     let preimage = [4u8; 32];
@@ -629,5 +674,48 @@ async fn test_lightning_valid_preimage_and_amount() {
         timestamp: now,
         expires_at: now + 3600,
     };
-    assert!(verifier.verify(&proof).await.unwrap().verified);
+    assert!(!verifier.verify(&proof).await.unwrap().verified);
+}
+
+#[tokio::test]
+async fn test_lightning_receipt_authorizes_the_stored_amount() {
+    let amount_msats = 5000;
+    let verifier = PaymentVerifier::new(OnChainMockNode::with_lightning_receipt(amount_msats));
+    let preimage = [4u8; 32];
+    let invoice = test_lightning_invoice(amount_msats, preimage);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let proof = PaymentProof::Lightning {
+        invoice,
+        preimage,
+        amount_msats,
+        timestamp: now,
+        expires_at: now + 3600,
+    };
+    let verification = verifier.verify(&proof).await.unwrap();
+    assert!(verification.verified);
+    assert_eq!(verification.amount, amount_msats / 1000);
+}
+
+#[tokio::test]
+async fn test_lightning_claim_above_the_receipt_is_rejected() {
+    let verifier = PaymentVerifier::new(OnChainMockNode::with_lightning_receipt(1000));
+    let preimage = [5u8; 32];
+    let amount_msats = 5000;
+    let invoice = test_lightning_invoice(amount_msats, preimage);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let proof = PaymentProof::Lightning {
+        invoice,
+        preimage,
+        amount_msats,
+        timestamp: now,
+        expires_at: now + 3600,
+    };
+    assert!(!verifier.verify(&proof).await.unwrap().verified);
 }

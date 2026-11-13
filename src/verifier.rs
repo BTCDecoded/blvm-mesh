@@ -149,33 +149,64 @@ impl PaymentVerifier {
             ));
         }
 
-        // Check if payment exists in node's payment system (optional verification)
-        let payment_id = format!("lightning_{}", hex::encode(&preimage[..16]));
-        match self.node_api.get_payment_state(&payment_id).await {
-            Ok(Some(payment_state)) => {
-                // Payment exists in node's payment system - additional verification
-                debug!("Payment found in node state: {:?}", payment_state);
-            }
-            Ok(None) => {
-                // Payment not in node's system yet - that's okay for mesh routing
-                // The invoice and preimage verification above is sufficient
-                debug!("Payment not yet in node state, but invoice verification passed");
-            }
+        // A matching preimage shows the sender knows the invoice. It does not
+        // show this node was paid. The Lightning module reports the amount it
+        // stored for an inbound payment.
+        let payment_hash = hex::encode(preimage_hash);
+        let params = serde_json::json!({
+            "invoice": invoice,
+            "payment_hash": payment_hash,
+            "payment_id": payment_hash,
+        });
+        let body = serde_json::to_vec(&params).unwrap_or_default();
+        let response = match self
+            .node_api
+            .call_module(Some("blvm-lightning"), "verify_payment", body)
+            .await
+        {
+            Ok(bytes) => bytes,
             Err(e) => {
-                // Error querying - log but don't fail (invoice verification is primary)
-                debug!("Error querying payment state (non-fatal): {}", e);
+                debug!("Lightning module did not verify the payment: {}", e);
+                return Ok(VerificationResult::failure(
+                    "lightning payment was not verified by this node".to_string(),
+                ));
             }
+        };
+        let parsed: serde_json::Value = match serde_json::from_slice(&response) {
+            Ok(value) => value,
+            Err(_) => {
+                return Ok(VerificationResult::failure(
+                    "lightning module returned an unreadable verification".to_string(),
+                ));
+            }
+        };
+        if parsed.get("verified").and_then(|v| v.as_bool()) != Some(true) {
+            return Ok(VerificationResult::failure(
+                "lightning payment was not received by this node".to_string(),
+            ));
+        }
+        let Some(received_msats) = parsed.get("amount_msats").and_then(|v| v.as_u64()) else {
+            return Ok(VerificationResult::failure(
+                "lightning module did not report a received amount".to_string(),
+            ));
+        };
+        if received_msats == 0 || amount_msats > received_msats {
+            return Ok(VerificationResult::failure(
+                "claimed lightning amount exceeds the amount this node received".to_string(),
+            ));
         }
 
-        // All verifications passed
         Ok(VerificationResult::success(
-            amount_msats / 1000, // Convert to satoshis
+            received_msats / 1000,
             timestamp,
             Some(expires_at),
         ))
     }
 
-    /// Verify on-chain settlement proof (path 3 — mempool + payment state via NodeAPI).
+    /// Verify on-chain settlement against a payment this node recorded.
+    ///
+    /// Mempool membership is not a payment. The stock node has no payment
+    /// state, and that error fails closed.
     async fn verify_on_chain(
         &self,
         payment_request_id: &str,
@@ -195,45 +226,50 @@ impl PaymentVerifier {
             return Ok(VerificationResult::failure("zero amount".to_string()));
         }
 
-        let mut mempool_ok = false;
-        if let Ok(in_mempool) = self.node_api.check_transaction_in_mempool(tx_hash).await {
-            if in_mempool {
-                mempool_ok = true;
-            }
-        }
-
-        if let Ok(Some(state)) = self.node_api.get_payment_state(payment_request_id).await {
-            debug!(
-                "On-chain payment state for {}: {:?}",
-                payment_request_id, state
-            );
-            if state.amount_sats != amount_sats {
-                return Ok(VerificationResult::failure(format!(
-                    "payment state amount mismatch: expected {} sats, got {}",
-                    amount_sats, state.amount_sats
-                )));
-            }
-            if let Some(ref hash) = state.tx_hash {
-                if hash != tx_hash {
-                    return Ok(VerificationResult::failure(
-                        "payment state tx_hash mismatch".to_string(),
-                    ));
-                }
-            }
-            if state.status == "failed" {
+        let state = match self.node_api.get_payment_state(payment_request_id).await {
+            Ok(Some(state)) => state,
+            Ok(None) => {
                 return Ok(VerificationResult::failure(
-                    "payment state is failed".to_string(),
+                    "no payment recorded for this request".to_string(),
                 ));
             }
-            return Ok(VerificationResult::success(amount_sats, timestamp, None));
+            Err(e) => {
+                debug!("Payment state unavailable for {payment_request_id}: {e}");
+                return Ok(VerificationResult::failure(
+                    "payment state unavailable".to_string(),
+                ));
+            }
+        };
+        if !Self::received_on_chain_status(&state.status) {
+            return Ok(VerificationResult::failure(format!(
+                "payment is not received (status {})",
+                state.status
+            )));
+        }
+        if state.amount_sats < amount_sats {
+            return Ok(VerificationResult::failure(format!(
+                "claimed amount {amount_sats} sats exceeds recorded payment {} sats",
+                state.amount_sats
+            )));
+        }
+        match state.tx_hash {
+            Some(hash) if hash == *tx_hash => {}
+            Some(_) => {
+                return Ok(VerificationResult::failure(
+                    "payment state tx_hash mismatch".to_string(),
+                ));
+            }
+            None => {
+                return Ok(VerificationResult::failure(
+                    "payment state has no transaction".to_string(),
+                ));
+            }
         }
 
-        if mempool_ok {
-            return Ok(VerificationResult::success(amount_sats, timestamp, None));
-        }
-
-        Ok(VerificationResult::failure(
-            "transaction not in mempool and no matching payment state".to_string(),
+        Ok(VerificationResult::success(
+            state.amount_sats,
+            timestamp,
+            None,
         ))
     }
 
@@ -348,6 +384,11 @@ impl PaymentVerifier {
 
         debug!("CTV covenant proof verified successfully");
         Ok(VerificationResult::success(amount_sats, timestamp, None))
+    }
+
+    /// A request that is only pending, or that failed, is not a receipt.
+    fn received_on_chain_status(status: &str) -> bool {
+        matches!(status, "confirmed" | "settled" | "in_mempool")
     }
 
     /// Check if minimum payment amount is met

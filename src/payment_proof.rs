@@ -102,6 +102,35 @@ impl PaymentProof {
         result.copy_from_slice(&hash);
         result
     }
+
+    /// Payment identity used for replay. A new timestamp or a higher claimed
+    /// amount is the same payment.
+    pub fn spent_key(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        match self {
+            PaymentProof::Lightning { preimage, .. } => {
+                hasher.update(b"lightning");
+                hasher.update(preimage);
+            }
+            PaymentProof::OnChainSettlement { tx_hash, .. } => {
+                hasher.update(b"onchain");
+                hasher.update(tx_hash);
+            }
+            #[cfg(feature = "ctv")]
+            PaymentProof::InstantSettlement {
+                covenant_proof,
+                output_index,
+                ..
+            } => {
+                hasher.update(b"ctv");
+                hasher.update(covenant_proof);
+                hasher.update(output_index.to_le_bytes());
+            }
+        }
+        hasher.finalize().into()
+    }
 }
 
 /// Payment verification result

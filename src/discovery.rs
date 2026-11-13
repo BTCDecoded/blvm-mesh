@@ -277,10 +277,16 @@ impl RouteDiscovery {
                 // Check if this is a response to a pending request
                 let mut pending = self.pending_requests.write().await;
                 if let Some(request) = pending.get_mut(request_id) {
-                    // Add responder
+                    // The responder is the peer on this socket. A shorter route
+                    // used to panic on `route[1]`. A route that names someone
+                    // else as the next hop is not this peer's route.
+                    if route.len() < 2 || route.get(1) != Some(&from_node) {
+                        return Err(MeshError::RoutingError(
+                            "discovery route must name this peer as the next hop".to_string(),
+                        ));
+                    }
                     request.responders.push(from_node);
 
-                    // Create routing entry
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
@@ -289,7 +295,7 @@ impl RouteDiscovery {
                     let entry = RoutingEntry {
                         node_id: *destination,
                         direct_address: None,
-                        next_hop: Some(route[1]), // Next hop is second node in route
+                        next_hop: Some(from_node),
                         route_path: route.clone(),
                         route_cost: *cost,
                         last_updated: now,

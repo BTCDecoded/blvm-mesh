@@ -50,9 +50,14 @@ async fn handle_mesh_packet_api_round_trip() {
 #[tokio::test]
 async fn mesh_identity_node_id_is_ed25519_pubkey() {
     let identity = MeshIdentity::from_seed(42);
-    let node_id = identity.node_id();
-    let payload: [u8; 32] = identity.hello_payload().try_into().unwrap();
-    assert_eq!(node_id, payload);
+    let challenge = [9u8; 32];
+    let offer = identity.hello_offer(&challenge);
+    assert_eq!(identity.node_id().as_slice(), &offer[..32]);
+    let proof = identity.hello_proof(&challenge);
+    assert_eq!(
+        MeshIdentity::verify_hello_proof(&proof, &challenge).unwrap(),
+        identity.node_id()
+    );
 }
 
 #[tokio::test]
@@ -79,7 +84,7 @@ async fn load_configured_peers_from_structured_config() {
 }
 
 #[tokio::test]
-async fn mesh_hello_updates_routing_table_with_ed25519_id() {
+async fn an_unsigned_hello_does_not_claim_a_node_id() {
     let local = MeshManager::new_for_test(
         true,
         MeshMode::Open,
@@ -90,24 +95,19 @@ async fn mesh_hello_updates_routing_table_with_ed25519_id() {
     let peer_identity = MeshIdentity::from_seed(55);
     let peer_id = peer_identity.node_id();
 
-    let mut packet = MeshPacket::new(
-        PacketType::Paid,
-        peer_id,
-        id(1),
-        peer_identity.hello_payload(),
-    );
+    let mut packet = MeshPacket::new(PacketType::Paid, peer_id, id(1), peer_id.to_vec());
     packet.metadata = Some(PacketMetadata {
         protocol: Some(PROTOCOL_HELLO.to_string()),
         fields: Default::default(),
     });
 
-    local
-        .handle_incoming_packet(&packet, Some("10.0.0.5:8333"))
-        .await
-        .unwrap();
-    let peers = local.list_direct_peers();
-    assert_eq!(peers.len(), 1);
-    assert_eq!(peers[0].0, peer_id);
+    assert!(
+        local
+            .handle_incoming_packet(&packet, Some("10.0.0.5:8333"))
+            .await
+            .is_err()
+    );
+    assert!(local.list_direct_peers().is_empty());
 }
 
 #[tokio::test]

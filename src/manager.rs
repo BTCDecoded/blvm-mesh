@@ -69,6 +69,8 @@ pub struct MeshManager {
     packet_sequences: Arc<PacketSequenceGuard>,
     /// Locally delivered app payloads awaiting external poll (e.g. app ingress bridge).
     local_delivery_queue: Arc<Mutex<Vec<LocalDelivery>>>,
+    /// Challenges we issued, keyed by the socket address we sent them to.
+    hello_challenges: std::sync::Mutex<std::collections::HashMap<String, [u8; 32]>>,
 }
 
 impl MeshManager {
@@ -134,6 +136,7 @@ impl MeshManager {
             rate_limiter,
             packet_sequences: Arc::new(PacketSequenceGuard::new()),
             local_delivery_queue: Arc::new(Mutex::new(Vec::new())),
+            hello_challenges: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -598,7 +601,9 @@ impl MeshManager {
                         .await;
                 }
                 PROTOCOL_DISCOVERY => {
-                    return self.handle_discovery_packet(packet).await;
+                    return self
+                        .handle_discovery_packet(packet, peer_addr.unwrap_or(""))
+                        .await;
                 }
                 _ => {}
             }
@@ -952,13 +957,39 @@ impl MeshManager {
         }
     }
 
+    fn issue_hello_challenge(&self, peer_addr: &str) -> [u8; 32] {
+        let mut challenge = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut challenge);
+        self.hello_challenges
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(peer_addr.to_string(), challenge);
+        challenge
+    }
+
+    fn hello_challenge_for(&self, peer_addr: &str) -> Option<[u8; 32]> {
+        self.hello_challenges
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(peer_addr)
+            .copied()
+    }
+
+    fn clear_hello_challenge(&self, peer_addr: &str) {
+        self.hello_challenges
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(peer_addr);
+    }
+
     async fn send_hello_to_peer(&self, peer_addr: &str) -> Result<(), MeshError> {
+        let challenge = self.issue_hello_challenge(peer_addr);
         let temp_id = Self::derive_node_id_from_address(peer_addr);
         let mut packet = MeshPacket::new(
             PacketType::Paid,
             self.node_id,
             temp_id,
-            self.identity.hello_payload(),
+            self.identity.hello_offer(&challenge),
         );
         packet.metadata = Some(PacketMetadata {
             protocol: Some(PROTOCOL_HELLO.to_string()),
@@ -973,7 +1004,33 @@ impl MeshManager {
         packet: &MeshPacket,
         peer_addr: &str,
     ) -> Result<(), MeshError> {
-        let peer_id = MeshIdentity::parse_hello_payload(&packet.payload)?;
+        if peer_addr.is_empty() {
+            return Err(MeshError::InvalidPacket(
+                "hello requires the peer address".to_string(),
+            ));
+        }
+        // 64 bytes is their offer (key || challenge). It does not bind a route.
+        // 96 bytes is a proof over the challenge we issued for this socket.
+        if packet.payload.len() == 64 {
+            let mut their_challenge = [0u8; 32];
+            their_challenge.copy_from_slice(&packet.payload[32..64]);
+            let proof = self.identity.hello_proof(&their_challenge);
+            let mut reply = MeshPacket::new(PacketType::Paid, self.node_id, self.node_id, proof);
+            reply.metadata = Some(PacketMetadata {
+                protocol: Some(PROTOCOL_HELLO.to_string()),
+                fields: std::collections::HashMap::new(),
+            });
+            let wire = serialize_mesh_packet(&reply)?;
+            self.send_mesh_packet(peer_addr.to_string(), wire).await?;
+            return Ok(());
+        }
+        let Some(challenge) = self.hello_challenge_for(peer_addr) else {
+            return Err(MeshError::InvalidPacket(
+                "no hello challenge for this peer".to_string(),
+            ));
+        };
+        let peer_id = MeshIdentity::verify_hello_proof(&packet.payload, &challenge)?;
+        self.clear_hello_challenge(peer_addr);
         let stale_id = Self::derive_node_id_from_address(peer_addr);
         if stale_id != peer_id {
             self.routing_table.remove_direct_peer(&stale_id);
@@ -1003,7 +1060,19 @@ impl MeshManager {
         Ok(())
     }
 
-    async fn handle_discovery_packet(&self, packet: &MeshPacket) -> Result<(), MeshError> {
+    async fn handle_discovery_packet(
+        &self,
+        packet: &MeshPacket,
+        peer_addr: &str,
+    ) -> Result<(), MeshError> {
+        let from_node = self
+            .routing_table
+            .node_id_for_address(peer_addr)
+            .ok_or_else(|| {
+                MeshError::InvalidPacket(
+                    "discovery requires a verified hello from this peer".to_string(),
+                )
+            })?;
         let message: DiscoveryMessage = bincode::deserialize(&packet.payload)
             .map_err(|e| MeshError::InvalidPacket(format!("discovery decode: {e}")))?;
 
@@ -1014,12 +1083,12 @@ impl MeshManager {
                     .handle_route_request(&message, self.node_id)
                     .await?
                 {
-                    self.send_discovery_to(packet.source, response).await?;
+                    self.send_discovery_to(from_node, response).await?;
                 }
             }
             DiscoveryMessage::RouteResponse { .. } => {
                 self.route_discovery
-                    .handle_route_response(&message, packet.source)
+                    .handle_route_response(&message, from_node)
                     .await?;
             }
             _ => {}
@@ -1209,6 +1278,7 @@ impl MeshManager {
             rate_limiter: Arc::new(RateLimiter::new(rate_limit_per_minute, 60)),
             packet_sequences: Arc::new(PacketSequenceGuard::new()),
             local_delivery_queue: Arc::new(Mutex::new(Vec::new())),
+            hello_challenges: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -1404,5 +1474,179 @@ mod tests {
         // Same payload bytes sniffed directly would also be Unknown → payment in payment_gated
         let sniffed = manager.determine_routing_policy(&[0xde, 0xad]);
         assert_eq!(sniffed, RoutingPolicy::PaymentRequired);
+    }
+
+    fn hello_packet(source: NodeId, payload: Vec<u8>) -> MeshPacket {
+        let mut packet = MeshPacket::new(PacketType::Paid, source, id(1), payload);
+        packet.metadata = Some(PacketMetadata {
+            protocol: Some(PROTOCOL_HELLO.to_string()),
+            fields: std::collections::HashMap::new(),
+        });
+        packet
+    }
+
+    #[tokio::test]
+    async fn a_signed_hello_binds_only_the_challenged_socket() {
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        let peer = MeshIdentity::from_seed(55);
+        let addr = "10.0.0.5:8333";
+        let challenge = [7u8; 32];
+        manager
+            .hello_challenges
+            .lock()
+            .unwrap()
+            .insert(addr.to_string(), challenge);
+        let packet = hello_packet(peer.node_id(), peer.hello_proof(&challenge));
+        manager
+            .handle_incoming_packet(&packet, Some(addr))
+            .await
+            .unwrap();
+        let peers = manager.list_direct_peers();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].0, peer.node_id());
+        assert_eq!(peers[0].1, addr);
+        assert!(
+            manager
+                .handle_incoming_packet(&packet, Some(addr))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hello_offer_does_not_bind_the_claimed_key() {
+        let api = Arc::new(TestNodeAPI::default());
+        let manager = MeshManager::new_for_test(true, MeshMode::Open, id(1), api.clone()).await;
+        let peer = MeshIdentity::from_seed(55);
+        let packet = hello_packet(peer.node_id(), peer.hello_offer(&[4u8; 32]));
+        manager
+            .handle_incoming_packet(&packet, Some("10.0.0.5:8333"))
+            .await
+            .unwrap();
+        assert!(manager.list_direct_peers().is_empty());
+        assert_eq!(api.take_outbox().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_short_discovery_route_does_not_panic() {
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        let request_id = match manager
+            .route_discovery
+            .begin_discovery(id(3), manager.node_id)
+            .await
+            .unwrap()
+        {
+            DiscoveryStart::Pending { request_id, .. } => request_id,
+            DiscoveryStart::Found(_) => panic!("expected a pending discovery"),
+        };
+        let response = DiscoveryMessage::RouteResponse {
+            destination: id(3),
+            source: manager.node_id,
+            request_id,
+            route: vec![manager.node_id],
+            cost: 1,
+        };
+        let err = manager
+            .route_discovery
+            .handle_route_response(&response, id(2))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("next hop"));
+        assert!(manager.routing_table.get_route(&id(3)).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_discovery_route_must_name_the_responder_as_the_next_hop() {
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        let request_id = match manager
+            .route_discovery
+            .begin_discovery(id(3), manager.node_id)
+            .await
+            .unwrap()
+        {
+            DiscoveryStart::Pending { request_id, .. } => request_id,
+            DiscoveryStart::Found(_) => panic!("expected a pending discovery"),
+        };
+        let refused = DiscoveryMessage::RouteResponse {
+            destination: id(3),
+            source: manager.node_id,
+            request_id,
+            route: vec![manager.node_id, id(9), id(3)],
+            cost: 1,
+        };
+        assert!(
+            manager
+                .route_discovery
+                .handle_route_response(&refused, id(2))
+                .await
+                .is_err()
+        );
+        let accepted = DiscoveryMessage::RouteResponse {
+            destination: id(3),
+            source: manager.node_id,
+            request_id,
+            route: vec![manager.node_id, id(2), id(3)],
+            cost: 1,
+        };
+        manager
+            .route_discovery
+            .handle_route_response(&accepted, id(2))
+            .await
+            .unwrap();
+        let stored = manager.routing_table.get_route(&id(3)).unwrap();
+        assert_eq!(stored.next_hop, Some(id(2)));
+    }
+
+    #[tokio::test]
+    async fn discovery_from_an_unverified_socket_is_refused() {
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        let response = DiscoveryMessage::RouteResponse {
+            destination: id(3),
+            source: id(9),
+            request_id: 1,
+            route: vec![id(1)],
+            cost: 1,
+        };
+        let mut packet = MeshPacket::new(
+            PacketType::Paid,
+            id(9),
+            manager.node_id,
+            bincode::serialize(&response).unwrap(),
+        );
+        packet.metadata = Some(PacketMetadata {
+            protocol: Some(PROTOCOL_DISCOVERY.to_string()),
+            fields: std::collections::HashMap::new(),
+        });
+        assert!(
+            manager
+                .handle_incoming_packet(&packet, Some("10.0.0.9:8333"))
+                .await
+                .is_err()
+        );
+        assert!(manager.routing_table.get_route(&id(3)).is_none());
     }
 }

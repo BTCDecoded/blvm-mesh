@@ -4,6 +4,7 @@ use crate::error::MeshError;
 use crate::routing::NodeId;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 const MESH_STATE_TREE: &str = "mesh_state";
@@ -58,6 +59,40 @@ impl MeshIdentity {
 
     pub fn node_id(&self) -> NodeId {
         self.signing_key.verifying_key().to_bytes()
+    }
+
+    /// AEAD key for a direct message with `peer`.
+    ///
+    /// `peer` is that node's Ed25519 verifying key. The key is X25519 between
+    /// this identity and that key. A party who only knows the two public ids
+    /// cannot derive it.
+    pub fn messaging_key(&self, peer: &NodeId) -> Result<[u8; 32], MeshError> {
+        let peer_key = VerifyingKey::from_bytes(peer).map_err(|e| {
+            MeshError::InvalidPacket(format!("peer node id is not an Ed25519 key: {e}"))
+        })?;
+        let secret = x25519_dalek::StaticSecret::from(self.signing_key.to_scalar_bytes());
+        let public = x25519_dalek::PublicKey::from(peer_key.to_montgomery().to_bytes());
+        let shared = secret.diffie_hellman(&public);
+        if !shared.was_contributory() {
+            return Err(MeshError::InvalidPacket(
+                "messaging key exchange was not contributory".to_string(),
+            ));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"mesh-messaging-v1");
+        hasher.update(shared.as_bytes());
+        let local = self.node_id();
+        if local <= *peer {
+            hasher.update(local);
+            hasher.update(peer);
+        } else {
+            hasher.update(peer);
+            hasher.update(local);
+        }
+        let digest = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&digest);
+        Ok(key)
     }
 
     /// Offer: our verifying key and a challenge the peer must sign.
@@ -178,5 +213,16 @@ mod tests {
         let offer = identity.hello_offer(&challenge);
         assert_eq!(&offer[..32], identity.node_id().as_slice());
         assert!(MeshIdentity::verify_hello_proof(&offer, &challenge).is_err());
+    }
+
+    #[test]
+    fn messaging_key_matches_only_for_the_two_parties() {
+        let alice = MeshIdentity::from_seed(1);
+        let bob = MeshIdentity::from_seed(2);
+        let carol = MeshIdentity::from_seed(3);
+        let alice_bob = alice.messaging_key(&bob.node_id()).unwrap();
+        assert_eq!(alice_bob, bob.messaging_key(&alice.node_id()).unwrap());
+        assert_ne!(alice_bob, carol.messaging_key(&bob.node_id()).unwrap());
+        assert!(alice.messaging_key(&[0u8; 32]).is_err());
     }
 }

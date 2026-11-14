@@ -167,6 +167,27 @@ impl MeshClient {
         Ok(node_id)
     }
 
+    /// AEAD key for a direct message with `peer`.
+    ///
+    /// The mesh module holds the signing key and returns only this derived key.
+    pub async fn messaging_key(&self, peer: NodeId) -> Result<[u8; 32], ModuleError> {
+        let params = bincode::serialize(&peer)
+            .map_err(|e| ModuleError::OperationError(format!("Serialization failed: {e}")))?;
+        let response = self
+            .node_api
+            .call_module(Some(&self.mesh_module_id), "messaging_key", params)
+            .await?;
+        if response.len() > crate::packet::MAX_BINCODE_PAYLOAD_SIZE {
+            return Err(ModuleError::OperationError(format!(
+                "Response too large: {} bytes (max: {} bytes)",
+                response.len(),
+                crate::packet::MAX_BINCODE_PAYLOAD_SIZE
+            )));
+        }
+        bincode::deserialize(&response)
+            .map_err(|e| ModuleError::OperationError(format!("Deserialization failed: {e}")))
+    }
+
     /// List direct mesh peers.
     pub async fn get_peer_list(&self) -> Result<Vec<PeerEntry>, ModuleError> {
         let response = self

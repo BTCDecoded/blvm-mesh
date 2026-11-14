@@ -6,11 +6,10 @@ use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Message structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +37,7 @@ impl MessagingService {
         let node_id = mesh_client
             .get_node_id()
             .await
-            .map_err(|e| format!("Failed to get node ID: {}", e))?;
+            .map_err(|e| format!("Failed to get node ID: {e}"))?;
 
         Ok(Self {
             mesh_client,
@@ -76,13 +75,13 @@ impl MessagingService {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            content: self.encrypt_message(&content, recipient)?,
+            content: self.encrypt_message(&content, recipient).await?,
             message_id,
         };
 
         // Serialize message
         let serialized = bincode::serialize(&message)
-            .map_err(|e| format!("Failed to serialize message: {}", e))?;
+            .map_err(|e| format!("Failed to serialize message: {e}"))?;
 
         // Send via mesh
         let serialized_len = serialized.len();
@@ -96,7 +95,7 @@ impl MessagingService {
                 Some("messaging-v1".to_string()),
             )
             .await
-            .map_err(|e| format!("Failed to send message via mesh: {}", e))?;
+            .map_err(|e| format!("Failed to send message via mesh: {e}"))?;
 
         if !response.success {
             return Err(response
@@ -135,7 +134,7 @@ impl MessagingService {
         }
         // Deserialize message
         let message: Message = bincode::deserialize(&packet_payload)
-            .map_err(|e| format!("Failed to deserialize message: {}", e))?;
+            .map_err(|e| format!("Failed to deserialize message: {e}"))?;
 
         // Check if message is for us
         if message.to != my_node_id {
@@ -144,7 +143,7 @@ impl MessagingService {
         }
 
         // Decrypt message
-        let decrypted = self.decrypt_message(&message.content, message.from)?;
+        let decrypted = self.decrypt_message(&message.content, message.from).await?;
 
         // Store in inbox
         {
@@ -207,59 +206,24 @@ impl MessagingService {
             .collect()
     }
 
-    /// Derive shared secret from sender and recipient node IDs
-    /// In production, this would use ECDH key exchange with public keys
-    fn derive_shared_key(sender: NodeId, recipient: NodeId) -> Key {
-        let mut hasher = Sha256::new();
-        hasher.update(b"e2e_messaging_key_v1");
-        // Sort to ensure same key regardless of direction
-        if sender < recipient {
-            hasher.update(&sender);
-            hasher.update(&recipient);
-        } else {
-            hasher.update(&recipient);
-            hasher.update(&sender);
-        }
-        let hash = hasher.finalize();
-        *Key::from_slice(&hash[..32])
+    /// Encrypt message for `recipient`. The key comes from the mesh identity.
+    async fn encrypt_message(&self, content: &[u8], recipient: NodeId) -> Result<Vec<u8>, String> {
+        let key = self
+            .mesh_client
+            .messaging_key(recipient)
+            .await
+            .map_err(|e| format!("Failed to derive messaging key: {e}"))?;
+        seal(&key, content)
     }
 
-    /// Encrypt message (end-to-end encryption)
-    fn encrypt_message(&self, content: &[u8], recipient: NodeId) -> Result<Vec<u8>, String> {
-        let shared_key = Self::derive_shared_key(self.node_id, recipient);
-        let cipher = ChaCha20Poly1305::new(&shared_key);
-        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-
-        let ciphertext = cipher
-            .encrypt(&nonce, content)
-            .map_err(|e| format!("Encryption failed: {}", e))?;
-
-        // Prepend nonce to ciphertext
-        let mut result = Vec::with_capacity(12 + ciphertext.len());
-        result.extend_from_slice(nonce.as_slice());
-        result.extend_from_slice(&ciphertext);
-
-        Ok(result)
-    }
-
-    /// Decrypt message
-    fn decrypt_message(&self, encrypted: &[u8], sender: NodeId) -> Result<Vec<u8>, String> {
-        if encrypted.len() < 12 {
-            return Err("Encrypted message too short".to_string());
-        }
-
-        // Extract nonce
-        let nonce = Nonce::from_slice(&encrypted[..12]);
-        let ciphertext = &encrypted[12..];
-
-        let shared_key = Self::derive_shared_key(sender, self.node_id);
-        let cipher = ChaCha20Poly1305::new(&shared_key);
-
-        let plaintext = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| format!("Decryption failed: {}", e))?;
-
-        Ok(plaintext)
+    /// Decrypt a message that claims to be from `sender`.
+    async fn decrypt_message(&self, encrypted: &[u8], sender: NodeId) -> Result<Vec<u8>, String> {
+        let key = self
+            .mesh_client
+            .messaging_key(sender)
+            .await
+            .map_err(|e| format!("Failed to derive messaging key: {e}"))?;
+        open(&key, encrypted)
     }
 
     /// Generate unique message ID
@@ -268,7 +232,7 @@ impl MessagingService {
         let mut hasher = Sha256::new();
         hasher.update(content);
         hasher.update(
-            &std::time::SystemTime::now()
+            std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
@@ -281,54 +245,61 @@ impl MessagingService {
     }
 }
 
+fn seal(key: &[u8; 32], content: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, content)
+        .map_err(|e| format!("Encryption failed: {e}"))?;
+    let mut result = Vec::with_capacity(12 + ciphertext.len());
+    result.extend_from_slice(nonce.as_slice());
+    result.extend_from_slice(&ciphertext);
+    Ok(result)
+}
+
+fn open(key: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>, String> {
+    if encrypted.len() < 12 {
+        return Err("Encrypted message too short".to_string());
+    }
+    let nonce = Nonce::from_slice(&encrypted[..12]);
+    let ciphertext = &encrypted[12..];
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| format!("Decryption failed: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn create_test_node_id(seed: u8) -> NodeId {
-        let mut id = [0u8; 32];
-        id[0] = seed;
-        id
-    }
+    use blvm_mesh::MeshIdentity;
+    use sha2::{Digest, Sha256};
 
     #[test]
-    fn test_e2e_encryption_decryption() {
-        let node_a = create_test_node_id(1);
-        let node_b = create_test_node_id(2);
+    fn a_third_party_cannot_open_a_direct_message() {
+        let alice = MeshIdentity::from_seed(1);
+        let bob = MeshIdentity::from_seed(2);
+        let carol = MeshIdentity::from_seed(3);
+        let alice_bob = alice.messaging_key(&bob.node_id()).unwrap();
+        let bob_alice = bob.messaging_key(&alice.node_id()).unwrap();
+        assert_eq!(alice_bob, bob_alice);
+        let carol_bob = carol.messaging_key(&bob.node_id()).unwrap();
+        assert_ne!(alice_bob, carol_bob);
 
-        // Simulate encryption from A to B
-        let shared_key = MessagingService::derive_shared_key(node_a, node_b);
-        let cipher = ChaCha20Poly1305::new(&shared_key);
-        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let message = b"Hello, encrypted world!";
+        let sealed = seal(&alice_bob, message).unwrap();
+        assert_eq!(open(&bob_alice, &sealed).unwrap(), message);
+        assert!(open(&carol_bob, &sealed).is_err());
 
-        let message = b"Hello, encrypted world!".to_vec();
-        let ciphertext = cipher.encrypt(&nonce, message.as_ref()).unwrap();
-
-        // Package with nonce
-        let mut encrypted = Vec::with_capacity(12 + ciphertext.len());
-        encrypted.extend_from_slice(nonce.as_slice());
-        encrypted.extend_from_slice(&ciphertext);
-
-        // Simulate decryption at B
-        let nonce = Nonce::from_slice(&encrypted[..12]);
-        let ciphertext = &encrypted[12..];
-        let decrypted = cipher.decrypt(nonce, ciphertext).unwrap();
-
-        assert_eq!(decrypted, message);
-    }
-
-    #[test]
-    fn test_shared_key_symmetry() {
-        let node_a = create_test_node_id(1);
-        let node_b = create_test_node_id(2);
-
-        let key_ab = MessagingService::derive_shared_key(node_a, node_b);
-        let key_ba = MessagingService::derive_shared_key(node_b, node_a);
-
-        assert_eq!(
-            key_ab.as_slice(),
-            key_ba.as_slice(),
-            "Shared keys should be symmetric"
-        );
+        let mut hasher = Sha256::new();
+        hasher.update(b"e2e_messaging_key_v1");
+        let (left, right) = if alice.node_id() < bob.node_id() {
+            (alice.node_id(), bob.node_id())
+        } else {
+            (bob.node_id(), alice.node_id())
+        };
+        hasher.update(left);
+        hasher.update(right);
+        assert_ne!(alice_bob.as_slice(), &hasher.finalize()[..]);
     }
 }

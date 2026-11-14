@@ -285,6 +285,16 @@ impl ModuleAPI for MeshModuleAPI {
                 Ok(bincode::serialize(&node_id)?)
             }
 
+            "messaging_key" => {
+                let peer: NodeId = bincode::deserialize(params)
+                    .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
+                let key = self
+                    .manager
+                    .messaging_key(&peer)
+                    .map_err(|e| ModuleError::OperationError(e.to_string()))?;
+                Ok(bincode::serialize(&key)?)
+            }
+
             "handle_mesh_packet" => {
                 let (packet_data, peer_addr): (Vec<u8>, String) = bincode::deserialize(params)
                     .map_err(|e| ModuleError::OperationError(format!("Invalid request: {e}")))?;
@@ -360,6 +370,7 @@ impl ModuleAPI for MeshModuleAPI {
             "get_route_stats".to_string(),
             "get_network_stats".to_string(),
             "get_node_id".to_string(),
+            "messaging_key".to_string(),
             "handle_mesh_packet".to_string(),
             "quote_route_fee".to_string(),
             "request_hop_invoice".to_string(),

@@ -61,6 +61,7 @@ async fn manager_ingress_rate_limit() {
     )
     .await;
 
+    mgr.add_peer_with_id("attacker:1", Some(id(9))).unwrap();
     let mut p1 = MeshPacket::new(PacketType::Paid, id(9), mgr.node_id(), b"x".to_vec());
     p1.sequence = 1;
     mgr.handle_incoming_packet(&p1, Some("attacker:1"))
@@ -91,6 +92,7 @@ async fn ingress_rejects_duplicate_sequence_from_source() {
         Arc::new(TestNodeAPI::default()),
     )
     .await;
+    mgr.add_peer_with_id("remote:1", Some(id(9))).unwrap();
     let mut p = MeshPacket::new(PacketType::Paid, id(9), id(1), b"1".to_vec());
     p.sequence = 5;
     mgr.handle_incoming_packet(&p, Some("remote:1"))

@@ -823,6 +823,11 @@ impl MeshManager {
         self.node_id
     }
 
+    /// AEAD key for a direct message with `peer`. The signing key stays here.
+    pub fn messaging_key(&self, peer: &NodeId) -> Result<[u8; 32], MeshError> {
+        self.identity.messaging_key(peer)
+    }
+
     /// Estimate routing fee in satoshis for a destination (direct or cached route).
     pub fn quote_route_fee_sats(&self, destination: NodeId, base_fee_sats: u64) -> u64 {
         if let Some(route) = self.routing_table.find_route(&destination) {

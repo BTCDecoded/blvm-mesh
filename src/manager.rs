@@ -609,15 +609,27 @@ impl MeshManager {
             }
         }
 
-        self.packet_sequences
-            .check_and_record(&packet.source, packet.sequence)
-            .map_err(MeshError::ReplayDetected)?;
+        // The counter is the socket's bound id plus the claimed source. A
+        // forward keeps the originator in `source`, and a rejected packet
+        // must not advance the counter.
+        let verified = self
+            .routing_table
+            .node_id_for_address(peer_addr.unwrap_or(""))
+            .ok_or_else(|| {
+                MeshError::InvalidPacket(
+                    "data packet requires a verified peer on this socket".to_string(),
+                )
+            })?;
 
         if !self.verify_forward_payment(packet).await? {
             return Err(MeshError::PaymentVerification(
                 "Payment proof required for paid forward".to_string(),
             ));
         }
+
+        self.packet_sequences
+            .check_and_record(&verified, &packet.source, packet.sequence)
+            .map_err(MeshError::ReplayDetected)?;
 
         // Check if packet is for this node
         if packet.is_for_me(&self.node_id) {
@@ -1375,7 +1387,11 @@ mod tests {
         )
         .await;
         let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"hello".to_vec());
-        manager.handle_incoming_packet(&packet, None).await.unwrap();
+        manager.add_peer_with_id("10.0.0.1:1", Some(id(1))).unwrap();
+        manager
+            .handle_incoming_packet(&packet, Some("10.0.0.1:1"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1393,7 +1409,11 @@ mod tests {
             protocol: Some("app-ukm-v1".to_string()),
             fields: Default::default(),
         });
-        manager.handle_incoming_packet(&packet, None).await.unwrap();
+        manager.add_peer_with_id("10.0.0.1:1", Some(id(1))).unwrap();
+        manager
+            .handle_incoming_packet(&packet, Some("10.0.0.1:1"))
+            .await
+            .unwrap();
         let deliveries = manager.poll_local_deliveries(Some("app-ukm-v1"), 8).await;
         assert_eq!(deliveries.len(), 1);
         assert_eq!(deliveries[0].payload, b"ukm-json");
@@ -1417,6 +1437,9 @@ mod tests {
         .await;
         let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"wire".to_vec());
         let wire = serialize_mesh_packet(&packet).unwrap();
+        manager
+            .add_peer_with_id("127.0.0.1:1", Some(id(1)))
+            .unwrap();
         manager
             .handle_mesh_packet_received(&wire, "127.0.0.1:1")
             .await
@@ -1648,5 +1671,59 @@ mod tests {
                 .is_err()
         );
         assert!(manager.routing_table.get_route(&id(3)).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_spoofed_source_does_not_advance_the_victims_sequence() {
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::Open,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        manager.add_peer_with_id("10.0.0.9:1", Some(id(9))).unwrap();
+        manager.add_peer_with_id("10.0.0.2:1", Some(id(2))).unwrap();
+        let mut spoof = MeshPacket::new(PacketType::Paid, id(2), id(1), b"lock".to_vec());
+        spoof.sequence = u64::MAX;
+        manager
+            .handle_incoming_packet(&spoof, Some("10.0.0.9:1"))
+            .await
+            .unwrap();
+        let again = manager
+            .handle_incoming_packet(&spoof, Some("10.0.0.9:1"))
+            .await
+            .unwrap_err();
+        assert!(matches!(again, MeshError::ReplayDetected(_)));
+        let mut real = MeshPacket::new(PacketType::Paid, id(2), id(1), b"ok".to_vec());
+        real.sequence = 1;
+        manager
+            .handle_incoming_packet(&real, Some("10.0.0.2:1"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_rejected_payment_does_not_consume_the_sequence() {
+        let manager = MeshManager::new_for_test(
+            true,
+            MeshMode::PaymentGated,
+            id(1),
+            Arc::new(TestNodeAPI::default()),
+        )
+        .await;
+        manager.add_peer_with_id("10.0.0.2:1", Some(id(2))).unwrap();
+        let mut packet = MeshPacket::new(PacketType::Paid, id(2), id(1), b"unpaid".to_vec());
+        packet.sequence = 9;
+        let first = manager
+            .handle_incoming_packet(&packet, Some("10.0.0.2:1"))
+            .await
+            .unwrap_err();
+        assert!(matches!(first, MeshError::PaymentVerification(_)));
+        let second = manager
+            .handle_incoming_packet(&packet, Some("10.0.0.2:1"))
+            .await
+            .unwrap_err();
+        assert!(matches!(second, MeshError::PaymentVerification(_)));
     }
 }

@@ -36,6 +36,9 @@ async fn handle_mesh_packet_api_round_trip() {
         Arc::new(TestNodeAPI::default()),
     )
     .await;
+    manager
+        .add_peer_with_id("127.0.0.1:9000", Some(id(1)))
+        .unwrap();
     let api = MeshModuleAPI::new(Arc::new(manager));
     let packet = MeshPacket::new(PacketType::Paid, id(1), local, b"api".to_vec());
     let wire = serialize_mesh_packet(&packet).unwrap();
@@ -155,10 +158,13 @@ async fn three_node_forward_chain() {
         Arc::new(TestNodeAPI::default()),
     )
     .await;
+    b.add_peer_with_id("127.0.0.1:1", Some(id(1))).unwrap();
     b.add_peer_with_id("127.0.0.1:3", Some(id(3))).unwrap();
 
     let packet = MeshPacket::new(PacketType::Paid, id(1), id(3), b"hop".to_vec());
-    b.handle_incoming_packet(&packet, None).await.unwrap();
+    b.handle_incoming_packet(&packet, Some("127.0.0.1:1"))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -184,12 +190,15 @@ async fn payment_gated_rejects_forward_without_proof() {
     )
     .await;
     manager
+        .add_peer_with_id("127.0.0.1:1", Some(id(1)))
+        .unwrap();
+    manager
         .add_peer_with_id("127.0.0.1:3", Some(id(3)))
         .unwrap();
 
     let packet = MeshPacket::new(PacketType::Paid, id(1), id(3), b"unpaid".to_vec());
     let err = manager
-        .handle_incoming_packet(&packet, None)
+        .handle_incoming_packet(&packet, Some("127.0.0.1:1"))
         .await
         .unwrap_err();
     assert!(matches!(

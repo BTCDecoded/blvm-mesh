@@ -38,7 +38,13 @@ async fn manager_with_queued_delivery() -> (Arc<MeshManager>, NodeId, Vec<u8>) {
         protocol: Some(APP_PROTOCOL.into()),
         fields: Default::default(),
     });
-    manager.handle_incoming_packet(&packet, None).await.unwrap();
+    manager
+        .add_peer_with_id("10.0.0.1:1", Some(source))
+        .unwrap();
+    manager
+        .handle_incoming_packet(&packet, Some("10.0.0.1:1"))
+        .await
+        .unwrap();
     (manager, source, payload)
 }
 

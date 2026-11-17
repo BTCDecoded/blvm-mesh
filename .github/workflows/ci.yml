@@ -55,8 +55,8 @@ jobs:
           TOOLCHAIN=$(grep -E '^channel|rust-version' rust-toolchain.toml Cargo.toml 2>/dev/null | head -1 | sha256sum | cut -d' ' -f1 || echo "stable")
           CACHE_KEY="${DEPS_KEY}-${TOOLCHAIN}"
           echo "cache-key=$CACHE_KEY" >> "$GITHUB_OUTPUT"
-          CACHE_ROOT="${BLVM_MESH_CACHE_ROOT}"
-          mkdir -p "$CACHE_ROOT/cargo/$CACHE_KEY"/{registry,git} "$CACHE_ROOT/target/$CACHE_KEY"
+          # The cache root is on the self-hosted runner. This job is
+          # ubuntu-latest and cannot create /mnt/data. The save step creates it.
 
   quality:
     name: Quality (fmt, clippy, test)

@@ -97,11 +97,12 @@ impl RoutingTable {
         self.direct_peers.remove(node_id);
 
         // Remove routing entry if it was direct-only (lock-free)
-        if let Some(entry) = self.routes.get(node_id) {
-            if entry.direct_address.is_some() && entry.next_hop.is_none() {
-                self.routes.remove(node_id);
-                debug!("Removed direct peer: node_id={:x?}", &node_id[..8]);
-            }
+        if let Some(entry) = self.routes.get(node_id)
+            && entry.direct_address.is_some()
+            && entry.next_hop.is_none()
+        {
+            self.routes.remove(node_id);
+            debug!("Removed direct peer: node_id={:x?}", &node_id[..8]);
         }
     }
 

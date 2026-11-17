@@ -66,14 +66,14 @@ impl ReplayPrevention {
         }
 
         // Check sequence number (FIBRE-inspired) - lock-free
-        if let Some(entry) = self.used_sequences.get(peer_id) {
-            if sequence <= *entry.value() {
-                return Err(format!(
-                    "Sequence number out of order: got {}, expected > {}",
-                    sequence,
-                    entry.value()
-                ));
-            }
+        if let Some(entry) = self.used_sequences.get(peer_id)
+            && sequence <= *entry.value()
+        {
+            return Err(format!(
+                "Sequence number out of order: got {}, expected > {}",
+                sequence,
+                entry.value()
+            ));
         }
 
         // Check expiry (proof itself checks this, but double-check)

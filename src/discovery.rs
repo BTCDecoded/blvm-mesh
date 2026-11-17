@@ -123,10 +123,10 @@ impl RouteDiscovery {
             return Ok(DiscoveryStart::Found(route));
         }
 
-        if let Some(entry) = self.routing_table.get_route(&destination) {
-            if entry.direct_address.is_some() {
-                return Ok(DiscoveryStart::Found(vec![source, destination]));
-            }
+        if let Some(entry) = self.routing_table.get_route(&destination)
+            && entry.direct_address.is_some()
+        {
+            return Ok(DiscoveryStart::Found(vec![source, destination]));
         }
 
         let request_id = self.next_request_id().await;

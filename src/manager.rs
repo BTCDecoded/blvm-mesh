@@ -633,11 +633,12 @@ impl MeshManager {
 
         // Check if packet is for this node
         if packet.is_for_me(&self.node_id) {
-            if let Some(protocol) = packet.metadata.as_ref().and_then(|m| m.protocol.as_deref()) {
-                if protocol != PROTOCOL_HELLO && protocol != PROTOCOL_DISCOVERY {
-                    self.enqueue_local_delivery(protocol, packet.payload.clone(), packet.source)
-                        .await;
-                }
+            if let Some(protocol) = packet.metadata.as_ref().and_then(|m| m.protocol.as_deref())
+                && protocol != PROTOCOL_HELLO
+                && protocol != PROTOCOL_DISCOVERY
+            {
+                self.enqueue_local_delivery(protocol, packet.payload.clone(), packet.source)
+                    .await;
             }
             debug!(
                 "Packet delivered to local node: source={:x?}",

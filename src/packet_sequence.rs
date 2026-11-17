@@ -32,14 +32,14 @@ impl PacketSequenceGuard {
         sequence: u64,
     ) -> Result<(), String> {
         let key = (*peer, *source);
-        if let Some(entry) = self.last_sequence.get(&key) {
-            if sequence <= *entry.value() {
-                return Err(format!(
-                    "packet sequence out of order: got {}, last {}",
-                    sequence,
-                    entry.value()
-                ));
-            }
+        if let Some(entry) = self.last_sequence.get(&key)
+            && sequence <= *entry.value()
+        {
+            return Err(format!(
+                "packet sequence out of order: got {}, last {}",
+                sequence,
+                entry.value()
+            ));
         }
         self.last_sequence.insert(key, sequence);
         Ok(())

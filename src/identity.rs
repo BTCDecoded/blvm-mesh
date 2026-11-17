@@ -31,17 +31,15 @@ impl MeshIdentity {
             });
         }
 
-        if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir) {
-            if let Ok(tree) = db.tree(MESH_STATE_TREE) {
-                if let Ok(Some(stored)) = tree.get(IDENTITY_SECRET_KEY) {
-                    if stored.len() == 32 {
-                        let mut seed = [0u8; 32];
-                        seed.copy_from_slice(&stored);
-                        let signing_key = SigningKey::from_bytes(&seed);
-                        return Ok(Self { signing_key });
-                    }
-                }
-            }
+        if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir)
+            && let Ok(tree) = db.tree(MESH_STATE_TREE)
+            && let Ok(Some(stored)) = tree.get(IDENTITY_SECRET_KEY)
+            && stored.len() == 32
+        {
+            let mut seed = [0u8; 32];
+            seed.copy_from_slice(&stored);
+            let signing_key = SigningKey::from_bytes(&seed);
+            return Ok(Self { signing_key });
         }
 
         let signing_key = SigningKey::generate(&mut OsRng);
@@ -169,10 +167,10 @@ fn load_identity_seed_from_config(data_dir: &Path) -> Result<[u8; 32], MeshError
 }
 
 fn persist_identity_seed(data_dir: &Path, seed: &[u8; 32]) {
-    if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir) {
-        if let Ok(tree) = db.tree(MESH_STATE_TREE) {
-            let _ = tree.insert(IDENTITY_SECRET_KEY, seed);
-        }
+    if let Ok(db) = blvm_sdk::module::ModuleDb::open(data_dir)
+        && let Ok(tree) = db.tree(MESH_STATE_TREE)
+    {
+        let _ = tree.insert(IDENTITY_SECRET_KEY, seed);
     }
 }
 

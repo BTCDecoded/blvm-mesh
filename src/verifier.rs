@@ -124,16 +124,16 @@ impl PaymentVerifier {
         }
 
         // Verify amount matches when the invoice encodes an amount.
-        if let Some(invoice_msats) = parsed_invoice.amount_milli_satoshis() {
-            if invoice_msats != amount_msats {
-                warn!(
-                    "Invoice amount mismatch: proof={} msats, invoice={} msats",
-                    amount_msats, invoice_msats
-                );
-                return Ok(VerificationResult::failure(format!(
-                    "Lightning amount mismatch: proof has {amount_msats} msats, invoice encodes {invoice_msats} msats"
-                )));
-            }
+        if let Some(invoice_msats) = parsed_invoice.amount_milli_satoshis()
+            && invoice_msats != amount_msats
+        {
+            warn!(
+                "Invoice amount mismatch: proof={} msats, invoice={} msats",
+                amount_msats, invoice_msats
+            );
+            return Ok(VerificationResult::failure(format!(
+                "Lightning amount mismatch: proof has {amount_msats} msats, invoice encodes {invoice_msats} msats"
+            )));
         }
 
         // Verify expiry

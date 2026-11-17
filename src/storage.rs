@@ -9,11 +9,11 @@ const STORAGE_KEY: &[u8] = b"mesh_config:node_id";
 
 pub fn up_v1(ctx: &MigrationContext) -> anyhow::Result<()> {
     let items_tree = ctx.open_tree("items")?;
-    if let Some(data) = items_tree.get(STORAGE_KEY)? {
-        if data.len() == 32 {
-            let mesh_state = ctx.open_tree(MESH_STATE_TREE)?;
-            mesh_state.insert(STORAGE_KEY, &data)?;
-        }
+    if let Some(data) = items_tree.get(STORAGE_KEY)?
+        && data.len() == 32
+    {
+        let mesh_state = ctx.open_tree(MESH_STATE_TREE)?;
+        mesh_state.insert(STORAGE_KEY, &data)?;
     }
     Ok(())
 }

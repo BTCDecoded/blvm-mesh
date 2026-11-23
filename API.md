@@ -136,10 +136,12 @@ Prevents reuse of payment proofs.
 Flat top-level keys in `<modules.data_dir>/blvm-mesh/config.toml` (no `[mesh]` wrapper for `MeshConfig`):
 
 ```toml
-enabled = true
 mode = "payment_gated"  # open | payment_gated | bitcoin_only
 max_peers = 50
 rate_limit_per_minute = 120
+
+[[peers]]
+address = "127.0.0.1:8333"
 ```
 
 ## Error Handling

@@ -73,7 +73,6 @@ async fn load_configured_peers_from_structured_config() {
     )
     .await;
     let config = MeshConfig {
-        enabled: true,
         peers: vec![MeshPeerEntry {
             address: "10.0.0.2:8333".to_string(),
             node_id_hex: Some(hex::encode(id(2))),

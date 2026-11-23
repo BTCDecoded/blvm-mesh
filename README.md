@@ -25,17 +25,19 @@ Or build from source and place the binary + `module.toml` on the module search p
 
 ## Configuration
 
-Create `config.toml` in `<modules.data_dir>/blvm-mesh/` with **flat top-level keys** (no `[mesh]` wrapper for `MeshConfig` — a `[mesh]` table is **silently ignored** and `enabled` stays **`false`**):
+Create `config.toml` in `<modules.data_dir>/blvm-mesh/` with **flat top-level keys** (no `[mesh]` wrapper for `MeshConfig` — a `[mesh]` table is ignored). Loading the module turns it on.
 
 ```toml
-enabled = true
 mode = "payment_gated"  # open | payment_gated | bitcoin_only
 max_peers = 50
 rate_limit_per_minute = 120   # 0 = off
-# peers = [{ address = "127.0.0.1:8333", node_id_hex = "..." }]
+
+[[peers]]
+address = "127.0.0.1:8333"
+# node_id_hex = "..."
 ```
 
-> **Note:** Some tooling writes `identity_seed_hex` under a `[mesh]` table for mesh identity; **`enabled`**, **`mode`**, and other **`MeshConfig`** fields belong at the **root** of `config.toml`.
+> **Note:** Some tooling writes `identity_seed_hex` under a `[mesh]` table for mesh identity. **`mode`** and the other **`MeshConfig`** fields belong at the **root** of `config.toml`.
 
 Node overrides: `[modules.blvm-mesh]` with the same flat keys.
 

@@ -41,8 +41,7 @@ Verify: `cargo test -p blvm-node --test ipc_forwarding_module_api_test` and
 
 ```toml
 # <data_dir>/modules/blvm-mesh/config.toml
-# MeshConfig is flat. A [mesh] table is ignored and leaves enabled false.
-enabled = true
+# MeshConfig is flat. A [mesh] table is ignored. Loading the module turns it on.
 mode = "open"
 ```
 
@@ -55,7 +54,7 @@ cp target/debug/blvm-mesh $NODE_DATA/modules/blvm-mesh/target/release/blvm-mesh
 
 ## Smoke test (two nodes)
 
-1. Start node A and node B with `blvm-mesh` enabled, `mode = "open"`.
+1. Start node A and node B with `blvm-mesh` loaded and `mode = "open"`.
 2. On B: `mesh status` — note **Node ID** (64-char hex).
 3. On A: `mesh add-peer <B-addr> <B-node-id-hex>` (explicit id required until mesh hello).
 4. On A: `mesh send_packet <B-node-id-hex> "hello" my-app-v1` (optional third arg sets `metadata.protocol` for app delivery / poll filter).
@@ -65,7 +64,7 @@ Without explicit `node_id_hex` on `add-peer`, local delivery fails until mesh he
 
 ## Smoke test (three nodes)
 
-1. Start nodes A, B, C with `blvm-mesh` enabled, `mode = "open"`.
+1. Start nodes A, B, C with `blvm-mesh` loaded and `mode = "open"`.
 2. Connect A↔B and B↔C at the P2P layer (Bitcoin peers or configured transports).
 3. On each node, confirm mesh hello runs on `PeerConnected` (logs: `Mesh hello from …`).
 4. On B: `mesh status` — note B and C **Node ID** (64-char hex, Ed25519 pubkey).

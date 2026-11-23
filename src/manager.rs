@@ -80,7 +80,7 @@ impl MeshManager {
         node_api: Arc<dyn NodeAPI>,
         _config: Option<&MeshConfig>,
     ) -> Result<Self, MeshError> {
-        let enabled = ctx.get_config_or("mesh.enabled", "false") == "true";
+        let enabled = true;
         let mode_str = ctx.get_config_or("mesh.mode", "payment_gated");
         let mode = MeshMode::from(mode_str.as_str());
 
@@ -201,18 +201,6 @@ impl MeshManager {
                 .map(|h| Self::parse_node_id_hex(h))
                 .transpose()?;
             self.add_peer_with_id(peer.address.trim(), node_id)?;
-        }
-        for addr in &config.peer_list {
-            let addr = addr.trim();
-            if !addr.is_empty() {
-                self.add_peer(addr)?;
-            }
-        }
-        for addr in &config.bootstrap_nodes {
-            let addr = addr.trim();
-            if !addr.is_empty() {
-                self.add_peer(addr)?;
-            }
         }
         Ok(())
     }

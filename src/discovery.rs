@@ -241,17 +241,17 @@ impl RouteDiscovery {
                     return Ok(Some(response));
                 }
 
-                if let Some(entry) = self.routing_table.get_route(destination) {
-                    if entry.direct_address.is_some() {
-                        let response = DiscoveryMessage::RouteResponse {
-                            destination: *destination,
-                            source: *source,
-                            request_id: *request_id,
-                            route: vec![*source, local_node_id, *destination],
-                            cost: 10,
-                        };
-                        return Ok(Some(response));
-                    }
+                if let Some(entry) = self.routing_table.get_route(destination)
+                    && entry.direct_address.is_some()
+                {
+                    let response = DiscoveryMessage::RouteResponse {
+                        destination: *destination,
+                        source: *source,
+                        request_id: *request_id,
+                        route: vec![*source, local_node_id, *destination],
+                        cost: 10,
+                    };
+                    return Ok(Some(response));
                 }
 
                 Ok(None)

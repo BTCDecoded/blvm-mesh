@@ -33,7 +33,11 @@ async fn main() -> Result<()> {
         async move {
             MeshConfig::reject_retired(&data_dir.join("config.toml"))
                 .map_err(blvm_node::module::traits::ModuleError::Other)?;
-            let (ctx, config) = bootstrap.context_with_config::<MeshConfig>(&data_dir);
+            let (ctx, config) = bootstrap
+                .context_with_config::<MeshConfig>(&data_dir)
+                .map_err(|error| {
+                    blvm_node::module::traits::ModuleError::Other(error.to_string())
+                })?;
             let manager = MeshManager::new(&ctx, Arc::clone(&node_api), Some(&config))
                 .await
                 .map_err(|e| {
